@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Union
 
 import pyarrow.dataset as ds
 
@@ -95,7 +95,7 @@ class OrExpr:
 
 
 # Type alias for any AST node.
-ExprNode = FilterExpr | AndExpr | OrExpr
+ExprNode = Union[FilterExpr, AndExpr, OrExpr]
 
 
 # -----------------------------------------------------------------
