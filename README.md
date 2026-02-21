@@ -2,6 +2,10 @@
 
 Generic Parquet filtering tool (CLI and Python API).
 
+[ReadtheDocs Documentation](https://pqfilt.readthedocs.io/en/latest/).
+
+Originally developed while dealing with large Parquet files in [SPHEREx mission](https://spherex.caltech.edu/) ([GitHub](https://github.com/SPHEREx)).
+
 `pqfilt` wraps `pyarrow.dataset` to let you filter Parquet files **before** they
 are fully read into memory, using row-group-level filtering.
 
