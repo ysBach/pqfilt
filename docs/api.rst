@@ -19,16 +19,10 @@ AST Nodes
 ~~~~~~~~~
 
 .. autoclass:: pqfilt.FilterExpr
-   :members:
-   :undoc-members:
 
 .. autoclass:: pqfilt.AndExpr
-   :members:
-   :undoc-members:
 
 .. autoclass:: pqfilt.OrExpr
-   :members:
-   :undoc-members:
 
 Operators
 ---------
