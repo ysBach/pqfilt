@@ -1,9 +1,9 @@
 # pqfilt
 
-Generic Parquet predicate-pushdown filter tool — CLI and Python API.
+Generic Parquet filtering tool (CLI and Python API).
 
 `pqfilt` wraps `pyarrow.dataset` to let you filter Parquet files **before** they
-are fully read into memory, using row-group-level predicate pushdown.
+are fully read into memory, using row-group-level filtering.
 
 ## Installation
 
