@@ -1,0 +1,143 @@
+"""Tests for the core read() function."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+
+import pqfilt
+
+
+class TestReadBasicFilter:
+    def test_gt_filter(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a > 5")
+        assert len(df) == 5
+        assert all(df["a"] > 5)
+
+    def test_le_filter(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="b <= 50")
+        assert len(df) == 5
+        assert all(df["b"] <= 50)
+
+    def test_eq_filter(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a == 3")
+        assert len(df) == 1
+        assert df["a"].iloc[0] == 3
+
+    def test_no_filter(self, sample_parquet):
+        df = pqfilt.read(sample_parquet)
+        assert len(df) == 10
+
+    def test_empty_result(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a > 100")
+        assert len(df) == 0
+
+
+class TestReadExpressionSyntax:
+    def test_and(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a > 3 & b < 80")
+        assert all(df["a"] > 3)
+        assert all(df["b"] < 80)
+
+    def test_or(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a <= 2 | a >= 9")
+        assert all((df["a"] <= 2) | (df["a"] >= 9))
+        assert len(df) == 4  # 1,2,9,10
+
+    def test_complex(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="(a <= 2 & b <= 20) | a == 10")
+        assert len(df) == 3  # rows with a=1,2,10
+
+    def test_in(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a in 1,3,5")
+        assert set(df["a"]) == {1, 3, 5}
+
+
+class TestReadTupleSyntax:
+    def test_flat_and(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters=[("a", ">", 5), ("b", "<", 90)])
+        assert all(df["a"] > 5)
+        assert all(df["b"] < 90)
+
+    def test_dnf_or(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters=[
+            [("a", "<=", 2)],
+            [("a", ">=", 9)],
+        ])
+        assert len(df) == 4
+
+
+class TestReadColumns:
+    def test_column_selection(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, columns=["a", "b"])
+        assert list(df.columns) == ["a", "b"]
+
+    def test_column_selection_with_filter(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a > 5", columns=["a", "name"])
+        assert set(df.columns) == {"a", "name"}
+        assert all(df["a"] > 5)
+
+
+class TestReadMultiFile:
+    def test_multi_file(self, multi_parquet):
+        df = pqfilt.read(multi_parquet, filters="a > 3")
+        assert all(df["a"] > 3)
+
+    def test_glob(self, multi_parquet, tmp_path):
+        pattern = str(tmp_path / "part_*.parquet")
+        df = pqfilt.read(pattern)
+        assert len(df) == 10
+
+
+class TestReadOutput:
+    def test_save_parquet(self, sample_parquet, tmp_path):
+        out = str(tmp_path / "out.parquet")
+        df = pqfilt.read(sample_parquet, filters="a > 5", output=out)
+        reloaded = pd.read_parquet(out)
+        assert len(reloaded) == len(df)
+
+    def test_save_csv(self, sample_parquet, tmp_path):
+        out = str(tmp_path / "out.csv")
+        df = pqfilt.read(sample_parquet, filters="a > 5", output=out)
+        reloaded = pd.read_csv(out)
+        assert len(reloaded) == len(df)
+
+    def test_overwrite_false_raises(self, sample_parquet, tmp_path):
+        out = str(tmp_path / "exists.parquet")
+        pqfilt.read(sample_parquet, output=out)
+        with pytest.raises(FileExistsError):
+            pqfilt.read(sample_parquet, output=out, overwrite=False)
+
+    def test_overwrite_true(self, sample_parquet, tmp_path):
+        out = str(tmp_path / "exists.parquet")
+        pqfilt.read(sample_parquet, output=out)
+        pqfilt.read(sample_parquet, filters="a > 5", output=out, overwrite=True)
+        reloaded = pd.read_parquet(out)
+        assert len(reloaded) == 5
+
+
+class TestReadPerFileFalse:
+    def test_per_file_false(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="a > 5", per_file=False)
+        assert len(df) == 5
+        assert all(df["a"] > 5)
+
+
+class TestReadSpecialColumns:
+    def test_space_in_column(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="`x y` > 0.5")
+        assert all(df["x y"] > 0.5)
+
+    def test_star_in_column(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="`r*1000` >= 500")
+        assert all(df["r*1000"] >= 500)
+
+
+class TestReadErrors:
+    def test_nonexistent_file(self):
+        with pytest.raises(FileNotFoundError):
+            pqfilt.read("/nonexistent/*.parquet")
+
+    def test_invalid_filter_type(self, sample_parquet):
+        with pytest.raises(TypeError):
+            pqfilt.read(sample_parquet, filters=42)

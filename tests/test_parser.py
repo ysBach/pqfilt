@@ -1,0 +1,145 @@
+"""Tests for the expression parser."""
+
+from __future__ import annotations
+
+import pytest
+
+from pqfilt._parser import (
+    AndExpr,
+    FilterExpr,
+    OrExpr,
+    parse_expression,
+    to_pyarrow_expr,
+)
+
+
+class TestSimpleComparisons:
+    def test_greater_than(self):
+        result = parse_expression("a > 5")
+        assert result == FilterExpr(col="a", op=">", val=5)
+
+    def test_less_equal_float(self):
+        result = parse_expression("vmag <= 20.5")
+        assert result == FilterExpr(col="vmag", op="<=", val=20.5)
+
+    def test_equality(self):
+        result = parse_expression("count == 42")
+        assert result == FilterExpr(col="count", op="==", val=42)
+
+    def test_not_equal(self):
+        result = parse_expression("flag != 0")
+        assert result == FilterExpr(col="flag", op="!=", val=0)
+
+    def test_string_value(self):
+        result = parse_expression("name == 'foo'")
+        assert result == FilterExpr(col="name", op="==", val="foo")
+
+
+class TestInNotIn:
+    def test_in_numeric(self):
+        result = parse_expression("desig in 1,2,3")
+        assert result == FilterExpr(col="desig", op="in", val=[1, 2, 3])
+
+    def test_not_in_strings(self):
+        result = parse_expression("name not in foo,bar")
+        assert result == FilterExpr(col="name", op="not in", val=["foo", "bar"])
+
+
+class TestAndOr:
+    def test_and(self):
+        result = parse_expression("a > 5 & b < 10")
+        assert isinstance(result, AndExpr)
+        assert len(result.children) == 2
+        assert result.children[0] == FilterExpr(col="a", op=">", val=5)
+        assert result.children[1] == FilterExpr(col="b", op="<", val=10)
+
+    def test_or(self):
+        result = parse_expression("a > 5 | b < 10")
+        assert isinstance(result, OrExpr)
+        assert len(result.children) == 2
+
+    def test_precedence_and_binds_tighter(self):
+        # a > 5 & b < 10 | c == 1  →  (a>5 AND b<10) OR (c==1)
+        result = parse_expression("a > 5 & b < 10 | c == 1")
+        assert isinstance(result, OrExpr)
+        assert len(result.children) == 2
+        assert isinstance(result.children[0], AndExpr)
+        assert isinstance(result.children[1], FilterExpr)
+
+    def test_parentheses_override(self):
+        # a > 5 & (b < 10 | c == 1)  →  a>5 AND (b<10 OR c==1)
+        result = parse_expression("a > 5 & (b < 10 | c == 1)")
+        assert isinstance(result, AndExpr)
+        assert len(result.children) == 2
+        assert isinstance(result.children[0], FilterExpr)
+        assert isinstance(result.children[1], OrExpr)
+
+    def test_nested_parens(self):
+        result = parse_expression("(a > 5 & b < 10) | (c == 1 & d != 2)")
+        assert isinstance(result, OrExpr)
+        assert len(result.children) == 2
+        assert all(isinstance(c, AndExpr) for c in result.children)
+
+
+class TestSpecialColumnNames:
+    def test_star_in_column(self):
+        result = parse_expression("alpha*360 > 100")
+        assert result == FilterExpr(col="alpha*360", op=">", val=100)
+
+    def test_space_in_column(self):
+        result = parse_expression("my column <= 50")
+        assert result == FilterExpr(col="my column", op="<=", val=50)
+
+    def test_backtick_quoted(self):
+        result = parse_expression("`col with spaces` > 5")
+        assert result == FilterExpr(col="col with spaces", op=">", val=5)
+
+    def test_hyphen_in_column(self):
+        result = parse_expression("obs-rate != 0")
+        assert result == FilterExpr(col="obs-rate", op="!=", val=0)
+
+
+class TestErrors:
+    def test_empty_expression(self):
+        with pytest.raises(ValueError, match="Empty"):
+            parse_expression("")
+
+    def test_no_operator(self):
+        with pytest.raises(ValueError, match="No recognised operator"):
+            parse_expression("just_a_column_name")
+
+    def test_unmatched_paren(self):
+        with pytest.raises(ValueError):
+            parse_expression("(a > 5")
+
+    def test_missing_value(self):
+        with pytest.raises(ValueError, match="Missing value"):
+            parse_expression("a >")
+
+
+class TestToPyarrowExpr:
+    def test_simple_filter(self):
+        node = FilterExpr(col="a", op=">", val=5)
+        expr = to_pyarrow_expr(node)
+        assert expr is not None  # pyarrow Expression
+
+    def test_and_expr(self):
+        node = AndExpr(children=(
+            FilterExpr(col="a", op=">", val=5),
+            FilterExpr(col="b", op="<", val=10),
+        ))
+        expr = to_pyarrow_expr(node)
+        assert expr is not None
+
+    def test_or_expr(self):
+        node = OrExpr(children=(
+            FilterExpr(col="a", op=">", val=5),
+            FilterExpr(col="b", op="<", val=10),
+        ))
+        expr = to_pyarrow_expr(node)
+        assert expr is not None
+
+    def test_in_expr(self):
+        node = FilterExpr(col="desig", op="in", val=[1, 2, 3])
+        expr = to_pyarrow_expr(node)
+        assert expr is not None

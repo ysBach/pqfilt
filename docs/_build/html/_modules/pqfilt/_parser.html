@@ -1,0 +1,521 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pqfilt._parser &mdash; pqfilt 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            pqfilt
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../changelog.html">Changelog</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">pqfilt</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">pqfilt._parser</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for pqfilt._parser</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Recursive-descent parser for filter expressions.</span>
+
+<span class="sd">Parses expressions like ``&quot;a &gt; 5 &amp; b &lt; 10 | c == 1&quot;`` into an AST</span>
+<span class="sd">that can be converted to ``pyarrow.compute.Expression``.</span>
+
+<span class="sd">Grammar (informal)::</span>
+
+<span class="sd">    expr        := or_expr</span>
+<span class="sd">    or_expr     := and_expr ( &#39;|&#39; and_expr )*</span>
+<span class="sd">    and_expr    := atom ( &#39;&amp;&#39; atom )*</span>
+<span class="sd">    atom        := &#39;(&#39; or_expr &#39;)&#39; | comparison</span>
+<span class="sd">    comparison  := column  operator  value</span>
+<span class="sd">    column      := backtick_quoted | greedy_match_up_to_operator</span>
+<span class="sd">    operator    := &#39;&gt;=&#39; | &#39;&lt;=&#39; | &#39;!=&#39; | &#39;==&#39; | &#39;&gt;&#39; | &#39;&lt;&#39; | &#39;not in&#39; | &#39;in&#39;</span>
+<span class="sd">    value       := number | quoted_string | comma_list (for in/not in)</span>
+
+<span class="sd">Operator precedence: ``&amp;`` binds tighter than ``|``.</span>
+<span class="sd">Parentheses override precedence.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow.dataset</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ds</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">._operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">SUPPORTED_OPERATORS</span><span class="p">,</span> <span class="n">to_numeric_if_possible</span><span class="p">,</span> <span class="n">validate_operator</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;FilterExpr&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;AndExpr&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;OrExpr&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;parse_expression&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;to_pyarrow_expr&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="c1"># Operators ordered longest-first so &#39;&gt;=&#39; is matched before &#39;&gt;&#39;.</span>
+<span class="n">_OPERATOR_PATTERN</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="sa">r</span><span class="s2">&quot;(&gt;=|&lt;=|!=|==|not\s+in\b|in\b|&gt;|&lt;)&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Backtick-quoted column name.</span>
+<span class="n">_BACKTICK_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^`([^`]+)`&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># -----------------------------------------------------------------</span>
+<span class="c1"># AST nodes</span>
+<span class="c1"># -----------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="FilterExpr">
+<a class="viewcode-back" href="../../api.html#pqfilt.FilterExpr">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">FilterExpr</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single comparison: ``col op val``.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    col : str</span>
+<span class="sd">        Column name.</span>
+<span class="sd">    op : str</span>
+<span class="sd">        Comparison operator (one of :data:`~pqfilt._operators.SUPPORTED_OPERATORS`).</span>
+<span class="sd">    val : Any</span>
+<span class="sd">        Comparison value (scalar or list for ``in`` / ``not in``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">col</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">op</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">val</span><span class="p">:</span> <span class="n">Any</span></div>
+
+
+
+<div class="viewcode-block" id="AndExpr">
+<a class="viewcode-back" href="../../api.html#pqfilt.AndExpr">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AndExpr</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Conjunction (AND) of child nodes.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    children : tuple of ExprNode</span>
+<span class="sd">        All children must evaluate to ``True``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">children</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">FilterExpr</span> <span class="o">|</span> <span class="n">OrExpr</span> <span class="o">|</span> <span class="n">AndExpr</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">tuple</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="OrExpr">
+<a class="viewcode-back" href="../../api.html#pqfilt.OrExpr">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrExpr</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Disjunction (OR) of child nodes.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    children : tuple of ExprNode</span>
+<span class="sd">        At least one child must evaluate to ``True``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">children</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">FilterExpr</span> <span class="o">|</span> <span class="n">AndExpr</span> <span class="o">|</span> <span class="n">OrExpr</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">tuple</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># Type alias for any AST node.</span>
+<span class="n">ExprNode</span> <span class="o">=</span> <span class="n">FilterExpr</span> <span class="o">|</span> <span class="n">AndExpr</span> <span class="o">|</span> <span class="n">OrExpr</span>
+
+
+<span class="c1"># -----------------------------------------------------------------</span>
+<span class="c1"># Tokeniser</span>
+<span class="c1"># -----------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_tokenise</span><span class="p">(</span><span class="n">expression</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Split *expression* into structural tokens and comparison blobs.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    expression : str</span>
+<span class="sd">        Raw expression string.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of (str, str)</span>
+<span class="sd">        Each element is ``(kind, text)`` where *kind* is one of</span>
+<span class="sd">        ``LPAREN``, ``RPAREN``, ``AND``, ``OR``, or ``CMP``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tokens</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">expression</span><span class="p">)</span>
+    <span class="n">buf</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flush_buf</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">text</span><span class="p">:</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;CMP&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">))</span>
+        <span class="n">buf</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="n">ch</span> <span class="o">=</span> <span class="n">expression</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">ch</span> <span class="o">==</span> <span class="s2">&quot;(&quot;</span><span class="p">:</span>
+            <span class="n">flush_buf</span><span class="p">()</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;LPAREN&quot;</span><span class="p">,</span> <span class="s2">&quot;(&quot;</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">ch</span> <span class="o">==</span> <span class="s2">&quot;)&quot;</span><span class="p">:</span>
+            <span class="n">flush_buf</span><span class="p">()</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;RPAREN&quot;</span><span class="p">,</span> <span class="s2">&quot;)&quot;</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">ch</span> <span class="o">==</span> <span class="s2">&quot;&amp;&quot;</span><span class="p">:</span>
+            <span class="n">flush_buf</span><span class="p">()</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;AND&quot;</span><span class="p">,</span> <span class="s2">&quot;&amp;&quot;</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">ch</span> <span class="o">==</span> <span class="s2">&quot;|&quot;</span><span class="p">:</span>
+            <span class="n">flush_buf</span><span class="p">()</span>
+            <span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;OR&quot;</span><span class="p">,</span> <span class="s2">&quot;|&quot;</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">buf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ch</span><span class="p">)</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">flush_buf</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">tokens</span>
+
+
+<span class="c1"># -----------------------------------------------------------------</span>
+<span class="c1"># Parse a single comparison blob  (col  op  value)</span>
+<span class="c1"># -----------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_parse_value_list</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse a comma-separated value list for ``in`` / ``not in``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    raw : str</span>
+<span class="sd">        Comma-separated values, e.g. ``&quot;1,2,3&quot;`` or ``&quot;foo,bar&quot;``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list</span>
+<span class="sd">        Parsed values with numeric coercion applied.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;&#39;</span><span class="se">\&quot;</span><span class="s2">&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)]</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">to_numeric_if_possible</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span> <span class="k">if</span> <span class="n">p</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_parse_comparison</span><span class="p">(</span><span class="n">blob</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FilterExpr</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse a comparison blob like ``&#39;alpha*360 &gt; 100&#39;`` into a FilterExpr.</span>
+
+<span class="sd">    Column names may be backtick-quoted to resolve ambiguity with operator</span>
+<span class="sd">    characters.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    blob : str</span>
+<span class="sd">        Raw comparison string.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    FilterExpr</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If no operator is found or the value is missing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">blob</span> <span class="o">=</span> <span class="n">blob</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">blob</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Empty comparison expression&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Try backtick-quoted column first.</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">_BACKTICK_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">col</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">rest</span> <span class="o">=</span> <span class="n">blob</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">end</span><span class="p">():]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Find the first operator.  The column name is everything before it.</span>
+        <span class="n">m_op</span> <span class="o">=</span> <span class="n">_OPERATOR_PATTERN</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">m_op</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;No recognised operator in expression: </span><span class="si">{</span><span class="n">blob</span><span class="si">!r}</span><span class="s2">. &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Supported: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">o</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">SUPPORTED_OPERATORS</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="n">col</span> <span class="o">=</span> <span class="n">blob</span><span class="p">[:</span><span class="n">m_op</span><span class="o">.</span><span class="n">start</span><span class="p">()]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">rest</span> <span class="o">=</span> <span class="n">blob</span><span class="p">[</span><span class="n">m_op</span><span class="o">.</span><span class="n">start</span><span class="p">():]</span>
+
+    <span class="c1"># Now *rest* should start with the operator.</span>
+    <span class="n">m_op</span> <span class="o">=</span> <span class="n">_OPERATOR_PATTERN</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">rest</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m_op</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected operator after column name in: </span><span class="si">{</span><span class="n">blob</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">op_raw</span> <span class="o">=</span> <span class="n">m_op</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># Normalise whitespace in &quot;not  in&quot; -&gt; &quot;not in&quot;</span>
+    <span class="n">op</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\s+&quot;</span><span class="p">,</span> <span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="n">op_raw</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">validate_operator</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+
+    <span class="n">val_str</span> <span class="o">=</span> <span class="n">rest</span><span class="p">[</span><span class="n">m_op</span><span class="o">.</span><span class="n">end</span><span class="p">():]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">val_str</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Missing value after operator in: </span><span class="si">{</span><span class="n">blob</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Strip surrounding quotes from value.</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">val_str</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;&#39;&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">val_str</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;&#39;&quot;</span><span class="p">))</span> <span class="ow">or</span> <span class="p">(</span>
+        <span class="n">val_str</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">val_str</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">)</span>
+    <span class="p">):</span>
+        <span class="n">val_str</span> <span class="o">=</span> <span class="n">val_str</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">op</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;in&quot;</span><span class="p">,</span> <span class="s2">&quot;not in&quot;</span><span class="p">):</span>
+        <span class="n">val</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">_parse_value_list</span><span class="p">(</span><span class="n">val_str</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="n">to_numeric_if_possible</span><span class="p">(</span><span class="n">val_str</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">FilterExpr</span><span class="p">(</span><span class="n">col</span><span class="o">=</span><span class="n">col</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">op</span><span class="p">,</span> <span class="n">val</span><span class="o">=</span><span class="n">val</span><span class="p">)</span>
+
+
+<span class="c1"># -----------------------------------------------------------------</span>
+<span class="c1"># Recursive-descent parser</span>
+<span class="c1"># -----------------------------------------------------------------</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_Parser</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursive-descent parser over the token list.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tokens</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">=</span> <span class="n">tokens</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_peek</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">pos</span><span class="p">]</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_consume</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expected_kind</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="n">tok</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">tok</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Unexpected end of expression&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">expected_kind</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">tok</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">expected_kind</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected </span><span class="si">{</span><span class="n">expected_kind</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">tok</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">tok</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">!r}</span><span class="s2">)&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pos</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">tok</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse_or</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExprNode</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Parse: ``or_expr := and_expr ( &#39;|&#39; and_expr )*``.&quot;&quot;&quot;</span>
+        <span class="n">left</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parse_and</span><span class="p">()</span>
+        <span class="n">children</span> <span class="o">=</span> <span class="p">[</span><span class="n">left</span><span class="p">]</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;OR&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_consume</span><span class="p">(</span><span class="s2">&quot;OR&quot;</span><span class="p">)</span>
+            <span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parse_and</span><span class="p">())</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">children</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">children</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">OrExpr</span><span class="p">(</span><span class="n">children</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">children</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse_and</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExprNode</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Parse: ``and_expr := atom ( &#39;&amp;&#39; atom )*``.&quot;&quot;&quot;</span>
+        <span class="n">left</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parse_atom</span><span class="p">()</span>
+        <span class="n">children</span> <span class="o">=</span> <span class="p">[</span><span class="n">left</span><span class="p">]</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;AND&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_consume</span><span class="p">(</span><span class="s2">&quot;AND&quot;</span><span class="p">)</span>
+            <span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parse_atom</span><span class="p">())</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">children</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">children</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">AndExpr</span><span class="p">(</span><span class="n">children</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">children</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse_atom</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExprNode</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Parse: ``atom := &#39;(&#39; or_expr &#39;)&#39; | comparison``.&quot;&quot;&quot;</span>
+        <span class="n">tok</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_peek</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">tok</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Unexpected end of expression&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">tok</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;LPAREN&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_consume</span><span class="p">(</span><span class="s2">&quot;LPAREN&quot;</span><span class="p">)</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parse_or</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_consume</span><span class="p">(</span><span class="s2">&quot;RPAREN&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">node</span>
+        <span class="k">if</span> <span class="n">tok</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;CMP&quot;</span><span class="p">:</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">blob</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_consume</span><span class="p">(</span><span class="s2">&quot;CMP&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">_parse_comparison</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unexpected token: </span><span class="si">{</span><span class="n">tok</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">tok</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">!r}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="parse_expression">
+<a class="viewcode-back" href="../../api.html#pqfilt.parse_expression">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_expression</span><span class="p">(</span><span class="n">expr</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExprNode</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse a filter expression string into an AST.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    expr : str</span>
+<span class="sd">        Expression such as ``&quot;a &gt; 5 &amp; b &lt; 10 | c == 1&quot;``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    ExprNode</span>
+<span class="sd">        A :class:`FilterExpr`, :class:`AndExpr`, or :class:`OrExpr` tree.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        On parse errors (unmatched parentheses, missing operator, etc.).</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; parse_expression(&quot;vmag &lt; 20&quot;)</span>
+<span class="sd">    FilterExpr(col=&#39;vmag&#39;, op=&#39;&lt;&#39;, val=20)</span>
+
+<span class="sd">    &gt;&gt;&gt; parse_expression(&quot;a &gt; 5 &amp; b &lt; 10&quot;)</span>
+<span class="sd">    AndExpr(children=(FilterExpr(col=&#39;a&#39;, op=&#39;&gt;&#39;, val=5), FilterExpr(col=&#39;b&#39;, op=&#39;&lt;&#39;, val=10)))</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="n">_tokenise</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">tokens</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Empty expression&quot;</span><span class="p">)</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">_Parser</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_or</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">parser</span><span class="o">.</span><span class="n">pos</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">parser</span><span class="o">.</span><span class="n">tokens</span><span class="p">):</span>
+        <span class="n">remaining</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">tokens</span><span class="p">[</span><span class="n">parser</span><span class="o">.</span><span class="n">pos</span><span class="p">:]</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unexpected trailing tokens: </span><span class="si">{</span><span class="n">remaining</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span></div>
+
+
+
+<span class="c1"># -----------------------------------------------------------------</span>
+<span class="c1"># AST -&gt; pyarrow.Expression</span>
+<span class="c1"># -----------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_filter_to_pa</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="n">FilterExpr</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ds</span><span class="o">.</span><span class="n">Expression</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a single FilterExpr to a pyarrow Expression.&quot;&quot;&quot;</span>
+    <span class="n">field</span> <span class="o">=</span> <span class="n">ds</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">col</span><span class="p">)</span>
+    <span class="n">op</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">op</span>
+    <span class="n">val</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">val</span>
+
+    <span class="k">if</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;&gt;&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">&gt;</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;&gt;=&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">&gt;=</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;&lt;&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">&lt;</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;&lt;=&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">&lt;=</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;==&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">==</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;!=&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span> <span class="o">!=</span> <span class="n">val</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;in&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">field</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;not in&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="o">~</span><span class="n">field</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported operator: </span><span class="si">{</span><span class="n">op</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="to_pyarrow_expr">
+<a class="viewcode-back" href="../../api.html#pqfilt.to_pyarrow_expr">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">to_pyarrow_expr</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="n">ExprNode</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ds</span><span class="o">.</span><span class="n">Expression</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a parsed AST into a ``pyarrow.compute.Expression``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    node : ExprNode</span>
+<span class="sd">        Output of :func:`parse_expression`.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    pyarrow.compute.Expression</span>
+<span class="sd">        Expression suitable for ``pyarrow.dataset.Dataset.to_table(filter=...)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">FilterExpr</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_filter_to_pa</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">AndExpr</span><span class="p">):</span>
+        <span class="n">exprs</span> <span class="o">=</span> <span class="p">[</span><span class="n">to_pyarrow_expr</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">]</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">exprs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">exprs</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">result</span> <span class="o">&amp;</span> <span class="n">e</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">OrExpr</span><span class="p">):</span>
+        <span class="n">exprs</span> <span class="o">=</span> <span class="p">[</span><span class="n">to_pyarrow_expr</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">]</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">exprs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">exprs</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">result</span> <span class="o">|</span> <span class="n">e</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown node type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">node</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Yoonsoo P. Bach.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
