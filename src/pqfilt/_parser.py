@@ -163,7 +163,8 @@ def _parse_value_list(raw: str) -> list[Any]:
     If a value is explicitly wrapped in single or double quotes
     (e.g., ``'3200'``), it is strictly preserved as a string to prevent
     type errors during predicate pushdown in pyarrow. Otherwise,
-    numeric coercion is attempted.
+    numeric coercion is attempted. Also supports stripping list enclosing
+    brackets like ``[1, 2, 3]``.
 
     Parameters
     ----------
@@ -175,6 +176,10 @@ def _parse_value_list(raw: str) -> list[Any]:
     list
         Parsed values with numeric coercion or preserved strings.
     """
+    raw = raw.strip()
+    if (raw.startswith("(") and raw.endswith(")")) or (raw.startswith("[") and raw.endswith("]")):
+        raw = raw[1:-1]
+
     parts = []
     for p in raw.split(","):
         p = p.strip()
@@ -251,19 +256,22 @@ def _parse_comparison(blob: str) -> FilterExpr:
 
     # Strip surrounding quotes from value.  If quoted, the user explicitly
     # wants a string comparison — skip numeric coercion.
-    was_quoted = False
-    if (val_str.startswith("'") and val_str.endswith("'")) or (
-        val_str.startswith('"') and val_str.endswith('"')
-    ):
-        val_str = val_str[1:-1]
-        was_quoted = True
-
+    # We DO NOT apply this top-level quote stripping to `in` / `not in` lists
+    # because they handle their own item-level quote stripping.
     if op in ("in", "not in"):
         val: Any = _parse_value_list(val_str)
-    elif was_quoted:
-        val = val_str
     else:
-        val = to_numeric_if_possible(val_str)
+        was_quoted = False
+        if (val_str.startswith("'") and val_str.endswith("'")) or (
+            val_str.startswith('"') and val_str.endswith('"')
+        ):
+            val_str = val_str[1:-1]
+            was_quoted = True
+
+        if was_quoted:
+            val = val_str
+        else:
+            val = to_numeric_if_possible(val_str)
 
     return FilterExpr(col=col, op=op, val=val)
 
