@@ -48,17 +48,19 @@ Expressions support ``&`` (AND), ``|`` (OR), and parentheses for grouping.
 Membership Filters
 ~~~~~~~~~~~~~~~~~~
 
-Use ``in`` and ``not in`` with comma-separated values::
+Use ``in`` and ``not in`` with comma-separated values. You can optionally enclose the
+list in brackets ``[]`` or parentheses ``()`` for readability::
 
-    df = pqfilt.read("data.parquet", filters="desig in 1,2,3")
-    df = pqfilt.read("data.parquet", filters="name not in foo,bar")
+    df = pqfilt.read("data.parquet", filters="desig in [1, 2, 3]")
+    df = pqfilt.read("data.parquet", filters="name not in (foo, bar)")
+    df = pqfilt.read("data.parquet", filters="desig in '1', '2', '3'")
 
 If your Parquet column is a string type but contains numeric-looking values
-(like ``"3200"``), explicitly wrap the values in single or double quotes to
-prevent `pqfilt` from coercing them to integers. This avoids PyArrow type errors::
+(like ``"1"``), explicitly wrap the values in single or double quotes to
+prevent `pqfilt` from coercing them to numbers. This avoids PyArrow type errors::
 
-    # '3200' is preserved as a string
-    df = pqfilt.read("data.parquet", filters="desig in '3200', '356'")
+    # '1' is preserved as a string
+    df = pqfilt.read("data.parquet", filters="desig in ['1', '356']")
 
 Tuple Syntax
 ~~~~~~~~~~~~

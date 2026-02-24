@@ -29,7 +29,10 @@ df = pqfilt.read("data.parquet", filters="vmag < 20")
 df = pqfilt.read("data.parquet", filters="(a < 30 & b > 50) | c == 1")
 
 # Membership filter (explicit quotes preserve string types, e.g., to prevent Parquet type errors)
-df = pqfilt.read("data.parquet", filters="desig in '3200', '356', '134'")
+# Supported array formats: "val1, val2", "(val1, val2)", "[val1, val2]"
+df = pqfilt.read("data.parquet", filters="desig in '1', '2', '3'")
+df = pqfilt.read("data.parquet", filters="desig in ('1', '2', '3')")
+df = pqfilt.read("data.parquet", filters="desig in ['1', '2', '3']")
 
 # Tuple syntax (flat AND)
 df = pqfilt.read("data.parquet", filters=[("a", "<", 30), ("b", ">", 50)])
@@ -59,8 +62,8 @@ pqfilt data/*.parquet -f "vmag < 20" -f "dec > 30" -o filtered.parquet
 # Column selection
 pqfilt data/*.parquet -f "vmag < 20" --columns vmag,ra,dec -o filtered.parquet
 
-# Membership filter
-pqfilt data/*.parquet -f "desig in 1,2,3" -o filtered.parquet
+# Membership filter (enclosing brackets [] or () are automatically stripped)
+pqfilt data/*.parquet -f "desig in [1, 2, 3]" -o filtered.parquet
 ```
 
 ### Column names with special characters
