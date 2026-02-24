@@ -228,14 +228,19 @@ def _parse_comparison(blob: str) -> FilterExpr:
     if not val_str:
         raise ValueError(f"Missing value after operator in: {blob!r}")
 
-    # Strip surrounding quotes from value.
+    # Strip surrounding quotes from value.  If quoted, the user explicitly
+    # wants a string comparison — skip numeric coercion.
+    was_quoted = False
     if (val_str.startswith("'") and val_str.endswith("'")) or (
         val_str.startswith('"') and val_str.endswith('"')
     ):
         val_str = val_str[1:-1]
+        was_quoted = True
 
     if op in ("in", "not in"):
         val: Any = _parse_value_list(val_str)
+    elif was_quoted:
+        val = val_str
     else:
         val = to_numeric_if_possible(val_str)
 
