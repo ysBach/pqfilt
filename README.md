@@ -28,6 +28,9 @@ df = pqfilt.read("data.parquet", filters="vmag < 20")
 # AND + OR with expression syntax
 df = pqfilt.read("data.parquet", filters="(a < 30 & b > 50) | c == 1")
 
+# Membership filter (explicit quotes preserve string types, e.g., to prevent Parquet type errors)
+df = pqfilt.read("data.parquet", filters="desig in '3200', '356', '134'")
+
 # Tuple syntax (flat AND)
 df = pqfilt.read("data.parquet", filters=[("a", "<", 30), ("b", ">", 50)])
 
