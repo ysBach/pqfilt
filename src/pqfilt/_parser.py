@@ -157,21 +157,42 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
 # Parse a single comparison blob  (col  op  value)
 # -----------------------------------------------------------------
 
-def _parse_value_list(raw: str) -> list[int | float | str]:
+def _parse_value_list(raw: str) -> list[Any]:
     """Parse a comma-separated value list for ``in`` / ``not in``.
+
+    If a value is explicitly wrapped in single or double quotes
+    (e.g., ``'3200'``), it is strictly preserved as a string to prevent
+    type errors during predicate pushdown in pyarrow. Otherwise,
+    numeric coercion is attempted.
 
     Parameters
     ----------
     raw : str
-        Comma-separated values, e.g. ``"1,2,3"`` or ``"foo,bar"``.
+        Comma-separated values, e.g. ``"1,2,3"`` or ``"foo,'356'"``.
 
     Returns
     -------
     list
-        Parsed values with numeric coercion applied.
+        Parsed values with numeric coercion or preserved strings.
     """
-    parts = [p.strip().strip("'\"") for p in raw.split(",")]
-    return [to_numeric_if_possible(p) for p in parts if p]
+    parts = []
+    for p in raw.split(","):
+        p = p.strip()
+        if not p:
+            continue
+
+        was_quoted = False
+        if (p.startswith("'") and p.endswith("'")) or (
+            p.startswith('"') and p.endswith('"')
+        ):
+            p = p[1:-1]
+            was_quoted = True
+
+        if was_quoted:
+            parts.append(p)
+        else:
+            parts.append(to_numeric_if_possible(p))
+    return parts
 
 
 def _parse_comparison(blob: str) -> FilterExpr:
