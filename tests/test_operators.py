@@ -76,3 +76,21 @@ class TestToNumericIfPossible:
 
     def test_negative_float(self):
         assert to_numeric_if_possible("-2.5") == -2.5
+
+    def test_true_canonical(self):
+        result = to_numeric_if_possible("True")
+        assert result is True
+        assert isinstance(result, bool)
+
+    def test_false_canonical(self):
+        result = to_numeric_if_possible("False")
+        assert result is False
+        assert isinstance(result, bool)
+
+    def test_true_lowercase(self):
+        result = to_numeric_if_possible("true")
+        assert result is True
+
+    def test_false_uppercase(self):
+        result = to_numeric_if_possible("FALSE")
+        assert result is False

@@ -141,3 +141,51 @@ class TestReadErrors:
     def test_invalid_filter_type(self, sample_parquet):
         with pytest.raises(TypeError):
             pqfilt.read(sample_parquet, filters=42)
+
+
+@pytest.fixture()
+def bool_parquet(tmp_path):
+    """Parquet file with a bool column ``is_comet``."""
+    df = pd.DataFrame({
+        "name": ["A", "B", "C", "D"],
+        "is_comet": [True, False, True, False],
+        "value": [1, 2, 3, 4],
+    })
+    path = tmp_path / "bool_test.parquet"
+    df.to_parquet(path, index=False)
+    return str(path)
+
+
+class TestReadBoolFilter:
+    def test_true_string(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet == True")
+        assert list(df["is_comet"]) == [True, True]
+        assert set(df["name"]) == {"A", "C"}
+
+    def test_false_string(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet == False")
+        assert list(df["is_comet"]) == [False, False]
+        assert set(df["name"]) == {"B", "D"}
+
+    def test_true_lowercase(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet == true")
+        assert len(df) == 2
+
+    def test_false_uppercase(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet == FALSE")
+        assert len(df) == 2
+
+    def test_true_tuple_syntax(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters=[("is_comet", "==", True)])
+        assert len(df) == 2
+
+    def test_neq_bool(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet != True")
+        assert len(df) == 2
+        assert all(~df["is_comet"])
+
+    def test_bool_and_numeric(self, bool_parquet):
+        df = pqfilt.read(bool_parquet, filters="is_comet == True & value > 1")
+        assert len(df) == 1
+        assert df["name"].iloc[0] == "C"
+
