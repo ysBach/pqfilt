@@ -81,13 +81,22 @@ def apply_filter_operator(op: str, left: Any, right: Any) -> Any:
         validate_operator(op)
 
 
-def to_numeric_if_possible(value_str: str) -> int | float | str:
-    """Convert *value_str* to ``int`` or ``float`` if possible.
+def to_numeric_if_possible(value_str: str) -> int | float | bool | str:
+    """Convert *value_str* to ``bool``, ``int``, or ``float`` if possible.
+
+    Bool recognition is attempted **before** numeric coercion so that
+    ``"True"`` / ``"False"`` (case-insensitive) become Python ``bool``
+    values rather than strings.  This is required to avoid type mismatches
+    when filtering boolean columns via pyarrow predicate pushdown.
 
     Prefers ``int`` when the float value is integer-like.
 
     Examples
     --------
+    >>> to_numeric_if_possible("True")
+    True
+    >>> to_numeric_if_possible("false")
+    False
     >>> to_numeric_if_possible("42")
     42
     >>> to_numeric_if_possible("3.14")
@@ -95,6 +104,12 @@ def to_numeric_if_possible(value_str: str) -> int | float | str:
     >>> to_numeric_if_possible("foo")
     'foo'
     """
+    # Bool must be checked before float because float("True") raises ValueError,
+    # but we want explicit bool semantics, not accidental numeric coercion.
+    if value_str.lower() == "true":
+        return True
+    if value_str.lower() == "false":
+        return False
     try:
         numeric_val = float(value_str)
         if numeric_val.is_integer():
