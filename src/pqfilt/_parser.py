@@ -7,14 +7,17 @@ Grammar (informal)::
 
     expr        := or_expr
     or_expr     := and_expr ( '|' and_expr )*
-    and_expr    := atom ( '&' atom )*
+    and_expr    := not_expr ( '&' not_expr )*
+    not_expr    := '~' not_expr | atom
     atom        := '(' or_expr ')' | comparison
-    comparison  := column  operator  value
+    comparison  := column  operator  value?
     column      := backtick_quoted | greedy_match_up_to_operator
-    operator    := '>=' | '<=' | '!=' | '==' | '>' | '<' | 'not in' | 'in'
+    operator    := '>=' | '<=' | '!=' | '==' | '>' | '<'
+                 | 'not in' | 'in' | 'is null' | 'is not null'
     value       := number | quoted_string | comma_list (for in/not in)
+                 | (none, for 'is null' / 'is not null')
 
-Operator precedence: ``&`` binds tighter than ``|``.
+Operator precedence (loose -> tight): ``|`` < ``&`` < ``~`` < atom.
 Parentheses override precedence.
 """
 
@@ -32,15 +35,14 @@ __all__ = [
     "FilterExpr",
     "AndExpr",
     "OrExpr",
+    "NotExpr",
     "parse_expression",
     "to_pyarrow_expr",
 ]
 
 # Operators ordered longest-first so '>=' is matched before '>', and
 # 'is not null' before 'is null'.
-_OPERATOR_PATTERN = re.compile(
-    r"(>=|<=|!=|==|is\s+not\s+null\b|is\s+null\b|not\s+in\b|in\b|>|<)"
-)
+_OPERATOR_PATTERN = re.compile(r"(>=|<=|!=|==|is\s+not\s+null\b|is\s+null\b|not\s+in\b|in\b|>|<)")
 
 # Backtick-quoted column name.
 _BACKTICK_RE = re.compile(r"^`([^`]+)`")
@@ -49,6 +51,7 @@ _BACKTICK_RE = re.compile(r"^`([^`]+)`")
 # -----------------------------------------------------------------
 # AST nodes
 # -----------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class FilterExpr:
@@ -95,13 +98,27 @@ class OrExpr:
     children: tuple[FilterExpr | AndExpr | OrExpr, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class NotExpr:
+    """Logical negation of a child node.
+
+    Attributes
+    ----------
+    child : ExprNode
+        The expression to negate.
+    """
+
+    child: "ExprNode"
+
+
 # Type alias for any AST node.
-ExprNode = Union[FilterExpr, AndExpr, OrExpr]
+ExprNode = Union[FilterExpr, AndExpr, OrExpr, NotExpr]
 
 
 # -----------------------------------------------------------------
 # Tokeniser
 # -----------------------------------------------------------------
+
 
 def _tokenise(expression: str) -> list[tuple[str, str]]:
     """Split *expression* into structural tokens and comparison blobs.
@@ -161,6 +178,12 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
             flush_buf()
             tokens.append(("OR", "|"))
             i += 1
+        elif ch == "~" and not "".join(buf).strip():
+            # `~` is a prefix negation operator. Only recognised when no
+            # non-whitespace CMP text has accumulated yet.
+            buf.clear()
+            tokens.append(("NOT", "~"))
+            i += 1
         else:
             buf.append(ch)
             i += 1
@@ -172,6 +195,7 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
 # -----------------------------------------------------------------
 # Parse a single comparison blob  (col  op  value)
 # -----------------------------------------------------------------
+
 
 def _parse_value_list(raw: str) -> list[Any]:
     """Parse a comma-separated value list for ``in`` / ``not in``.
@@ -203,9 +227,7 @@ def _parse_value_list(raw: str) -> list[Any]:
             continue
 
         was_quoted = False
-        if (p.startswith("'") and p.endswith("'")) or (
-            p.startswith('"') and p.endswith('"')
-        ):
+        if (p.startswith("'") and p.endswith("'")) or (p.startswith('"') and p.endswith('"')):
             p = p[1:-1]
             was_quoted = True
 
@@ -268,7 +290,7 @@ def _parse_comparison(blob: str) -> FilterExpr:
     m = _BACKTICK_RE.match(blob)
     if m:
         col = m.group(1)
-        rest = blob[m.end():].strip()
+        rest = blob[m.end() :].strip()
     else:
         # Find the first operator.  The column name is everything before it.
         m_op = _OPERATOR_PATTERN.search(blob)
@@ -277,8 +299,8 @@ def _parse_comparison(blob: str) -> FilterExpr:
                 f"No recognised operator in expression: {blob!r}. "
                 f"Supported: {', '.join(repr(o) for o in SUPPORTED_OPERATORS)}"
             )
-        col = blob[:m_op.start()].strip()
-        rest = blob[m_op.start():]
+        col = blob[: m_op.start()].strip()
+        rest = blob[m_op.start() :]
 
     # Now *rest* should start with the operator.
     m_op = _OPERATOR_PATTERN.match(rest)
@@ -290,14 +312,12 @@ def _parse_comparison(blob: str) -> FilterExpr:
     op = re.sub(r"\s+", " ", op_raw).strip()
     validate_operator(op)
 
-    val_str = rest[m_op.end():].strip()
+    val_str = rest[m_op.end() :].strip()
 
     # `is null` / `is not null` are unary -- no right-hand value.
     if op in ("is null", "is not null"):
         if val_str:
-            raise ValueError(
-                f"Operator {op!r} takes no value, got {val_str!r} in: {blob!r}"
-            )
+            raise ValueError(f"Operator {op!r} takes no value, got {val_str!r} in: {blob!r}")
         return FilterExpr(col=col, op=op, val=None)
 
     if not val_str:
@@ -328,6 +348,7 @@ def _parse_comparison(blob: str) -> FilterExpr:
 # -----------------------------------------------------------------
 # Recursive-descent parser
 # -----------------------------------------------------------------
+
 
 class _Parser:
     """Recursive-descent parser over the token list."""
@@ -362,15 +383,26 @@ class _Parser:
         return OrExpr(children=tuple(children))
 
     def parse_and(self) -> ExprNode:
-        """Parse: ``and_expr := atom ( '&' atom )*``."""
-        left = self.parse_atom()
+        """Parse: ``and_expr := not_expr ( '&' not_expr )*``."""
+        left = self.parse_not()
         children = [left]
         while self._peek() is not None and self._peek()[0] == "AND":
             self._consume("AND")
-            children.append(self.parse_atom())
+            children.append(self.parse_not())
         if len(children) == 1:
             return children[0]
         return AndExpr(children=tuple(children))
+
+    def parse_not(self) -> ExprNode:
+        """Parse: ``not_expr := '~' not_expr | atom``.
+
+        Right-associative; binds tighter than ``&``/``|``.
+        """
+        tok = self._peek()
+        if tok is not None and tok[0] == "NOT":
+            self._consume("NOT")
+            return NotExpr(child=self.parse_not())
+        return self.parse_atom()
 
     def parse_atom(self) -> ExprNode:
         """Parse: ``atom := '(' or_expr ')' | comparison``."""
@@ -420,7 +452,7 @@ def parse_expression(expr: str) -> ExprNode:
     parser = _Parser(tokens)
     result = parser.parse_or()
     if parser.pos < len(parser.tokens):
-        remaining = parser.tokens[parser.pos:]
+        remaining = parser.tokens[parser.pos :]
         raise ValueError(f"Unexpected trailing tokens: {remaining}")
     return result
 
@@ -428,6 +460,7 @@ def parse_expression(expr: str) -> ExprNode:
 # -----------------------------------------------------------------
 # AST -> pyarrow.Expression
 # -----------------------------------------------------------------
+
 
 def _filter_to_pa(node: FilterExpr) -> ds.Expression:
     """Convert a single FilterExpr to a pyarrow Expression."""
@@ -486,5 +519,7 @@ def to_pyarrow_expr(node: ExprNode) -> ds.Expression:
         for e in exprs[1:]:
             result = result | e
         return result
+    elif isinstance(node, NotExpr):
+        return ~to_pyarrow_expr(node.child)
     else:
         raise TypeError(f"Unknown node type: {type(node)}")

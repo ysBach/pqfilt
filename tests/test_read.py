@@ -60,10 +60,13 @@ class TestReadTupleSyntax:
         assert all(df["b"] < 90)
 
     def test_dnf_or(self, sample_parquet):
-        df = pqfilt.read(sample_parquet, filters=[
-            [("a", "<=", 2)],
-            [("a", ">=", 9)],
-        ])
+        df = pqfilt.read(
+            sample_parquet,
+            filters=[
+                [("a", "<=", 2)],
+                [("a", ">=", 9)],
+            ],
+        )
         assert len(df) == 4
 
 
@@ -137,10 +140,12 @@ class TestReadNullOperators:
     @pytest.fixture
     def nullable_parquet(self, tmp_path):
         path = tmp_path / "nullable.parquet"
-        df = pd.DataFrame({
-            "id": [1, 2, 3, 4, 5],
-            "v": [1.0, None, 3.0, None, 5.0],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3, 4, 5],
+                "v": [1.0, None, 3.0, None, 5.0],
+            }
+        )
         df.to_parquet(path, index=False)
         return str(path)
 
@@ -174,19 +179,19 @@ class TestReadErrors:
 
     def test_missing_column_pandas_path_raises_keyerror(self, sample_parquet):
         with pytest.raises(KeyError, match="no_such_col"):
-            pqfilt.read(
-                sample_parquet, filters="no_such_col > 0", per_file=False
-            )
+            pqfilt.read(sample_parquet, filters="no_such_col > 0", per_file=False)
 
 
 @pytest.fixture()
 def bool_parquet(tmp_path):
     """Parquet file with a bool column ``is_comet``."""
-    df = pd.DataFrame({
-        "name": ["A", "B", "C", "D"],
-        "is_comet": [True, False, True, False],
-        "value": [1, 2, 3, 4],
-    })
+    df = pd.DataFrame(
+        {
+            "name": ["A", "B", "C", "D"],
+            "is_comet": [True, False, True, False],
+            "value": [1, 2, 3, 4],
+        }
+    )
     path = tmp_path / "bool_test.parquet"
     df.to_parquet(path, index=False)
     return str(path)
@@ -225,3 +230,20 @@ class TestReadBoolFilter:
         assert len(df) == 1
         assert df["name"].iloc[0] == "C"
 
+
+class TestReadNegation:
+    def test_not_simple(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="~(a > 5)")
+        assert all(df["a"] <= 5)
+        assert len(df) == 5
+
+    def test_not_compound(self, sample_parquet):
+        # ~(a <= 2 | a >= 9) should give rows 3..8
+        df = pqfilt.read(sample_parquet, filters="~(a <= 2 | a >= 9)")
+        assert len(df) == 6
+        assert all((df["a"] > 2) & (df["a"] < 9))
+
+    def test_not_pandas_path(self, sample_parquet):
+        df = pqfilt.read(sample_parquet, filters="~(a > 5)", per_file=False)
+        assert all(df["a"] <= 5)
+        assert len(df) == 5

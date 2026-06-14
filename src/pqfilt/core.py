@@ -17,6 +17,7 @@ from ._parser import (
     AndExpr,
     ExprNode,
     FilterExpr,
+    NotExpr,
     OrExpr,
     parse_expression,
     to_pyarrow_expr,
@@ -71,9 +72,7 @@ def _tuples_to_ast(filters: list) -> ExprNode:
         children = []
         for item in filters:
             if not (isinstance(item, tuple) and len(item) == 3):
-                raise ValueError(
-                    f"Each filter must be a 3-tuple (col, op, val), got {item!r}"
-                )
+                raise ValueError(f"Each filter must be a 3-tuple (col, op, val), got {item!r}")
             c, o, v = item
             validate_operator(o, col=c)
             children.append(FilterExpr(col=c, op=o, val=v))
@@ -205,12 +204,10 @@ def read(
             ast = parse_expression(filters)
         elif isinstance(filters, list):
             ast = _tuples_to_ast(filters)
-        elif isinstance(filters, (FilterExpr, AndExpr, OrExpr)):
+        elif isinstance(filters, (FilterExpr, AndExpr, OrExpr, NotExpr)):
             ast = filters
         else:
-            raise TypeError(
-                f"filters must be str, list, or ExprNode, got {type(filters).__name__}"
-            )
+            raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
         pa_filter = to_pyarrow_expr(ast)
 
     # -- read --
@@ -233,9 +230,7 @@ def read(
     if output is not None:
         out = Path(output)
         if out.exists() and not overwrite:
-            raise FileExistsError(
-                f"Output file '{output}' already exists. Use overwrite=True."
-            )
+            raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
         if out.suffix.lower() == ".csv":
             result.to_csv(out, index=False)
         elif out_table is not None:
@@ -252,6 +247,7 @@ def read(
 # -----------------------------------------------------------------
 # Pandas-level filtering (for per_file=False path)
 # -----------------------------------------------------------------
+
 
 def _apply_pandas_filter(df: pd.DataFrame, node: ExprNode) -> pd.DataFrame:
     """Apply a parsed filter AST to a pandas DataFrame.
@@ -277,8 +273,7 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
     if isinstance(node, FilterExpr):
         if node.col not in df.columns:
             raise KeyError(
-                f"Column {node.col!r} not found in DataFrame. "
-                f"Available columns: {list(df.columns)}"
+                f"Column {node.col!r} not found in DataFrame. Available columns: {list(df.columns)}"
             )
         return apply_filter_operator(node.op, df[node.col], node.val)
     elif isinstance(node, AndExpr):
@@ -291,5 +286,7 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
         for child in node.children[1:]:
             mask = mask | _eval_node(df, child)
         return mask
+    elif isinstance(node, NotExpr):
+        return ~_eval_node(df, node.child)
     else:
         raise TypeError(f"Unknown node type: {type(node)}")

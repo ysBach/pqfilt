@@ -11,6 +11,6 @@ Usage::
 from __future__ import annotations
 
 from .core import read
-from ._parser import parse_expression, FilterExpr, AndExpr, OrExpr
+from ._parser import parse_expression, FilterExpr, AndExpr, OrExpr, NotExpr
 
-__all__ = ["read", "parse_expression", "FilterExpr", "AndExpr", "OrExpr"]
+__all__ = ["read", "parse_expression", "FilterExpr", "AndExpr", "OrExpr", "NotExpr"]

@@ -9,14 +9,26 @@ import pytest
 @pytest.fixture()
 def sample_df() -> pd.DataFrame:
     """DataFrame with varied column types for testing."""
-    return pd.DataFrame({
-        "a": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        "b": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
-        "name": ["alpha", "beta", "gamma", "delta", "epsilon",
-                 "zeta", "eta", "theta", "iota", "kappa"],
-        "x y": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],  # space in name
-        "r*1000": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],  # special char
-    })
+    return pd.DataFrame(
+        {
+            "a": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "b": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
+            "name": [
+                "alpha",
+                "beta",
+                "gamma",
+                "delta",
+                "epsilon",
+                "zeta",
+                "eta",
+                "theta",
+                "iota",
+                "kappa",
+            ],
+            "x y": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],  # space in name
+            "r*1000": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],  # special char
+        }
+    )
 
 
 @pytest.fixture()

@@ -7,6 +7,7 @@ import pytest
 from pqfilt._parser import (
     AndExpr,
     FilterExpr,
+    NotExpr,
     OrExpr,
     parse_expression,
     to_pyarrow_expr,
@@ -124,18 +125,22 @@ class TestToPyarrowExpr:
         assert expr is not None  # pyarrow Expression
 
     def test_and_expr(self):
-        node = AndExpr(children=(
-            FilterExpr(col="a", op=">", val=5),
-            FilterExpr(col="b", op="<", val=10),
-        ))
+        node = AndExpr(
+            children=(
+                FilterExpr(col="a", op=">", val=5),
+                FilterExpr(col="b", op="<", val=10),
+            )
+        )
         expr = to_pyarrow_expr(node)
         assert expr is not None
 
     def test_or_expr(self):
-        node = OrExpr(children=(
-            FilterExpr(col="a", op=">", val=5),
-            FilterExpr(col="b", op="<", val=10),
-        ))
+        node = OrExpr(
+            children=(
+                FilterExpr(col="a", op=">", val=5),
+                FilterExpr(col="b", op="<", val=10),
+            )
+        )
         expr = to_pyarrow_expr(node)
         assert expr is not None
 
@@ -204,3 +209,43 @@ class TestQuotedLiterals:
     def test_double_quoted_value(self):
         result = parse_expression('name == "a|b"')
         assert result == FilterExpr(col="name", op="==", val="a|b")
+
+
+class TestNegation:
+    def test_simple_not(self):
+        result = parse_expression("~(a > 5)")
+        assert result == NotExpr(child=FilterExpr(col="a", op=">", val=5))
+
+    def test_not_without_parens(self):
+        result = parse_expression("~a > 5")
+        assert result == NotExpr(child=FilterExpr(col="a", op=">", val=5))
+
+    def test_not_precedence_over_and(self):
+        # ~a > 5 | b < 1  →  (~(a>5)) OR (b<1)
+        result = parse_expression("~a > 5 | b < 1")
+        assert isinstance(result, OrExpr)
+        assert isinstance(result.children[0], NotExpr)
+        assert isinstance(result.children[1], FilterExpr)
+
+    def test_not_in_and(self):
+        result = parse_expression("a > 5 & ~(b in 1,2)")
+        assert isinstance(result, AndExpr)
+        assert isinstance(result.children[1], NotExpr)
+        inner = result.children[1].child
+        assert inner == FilterExpr(col="b", op="in", val=[1, 2])
+
+    def test_double_not(self):
+        result = parse_expression("~~a > 5")
+        assert isinstance(result, NotExpr)
+        assert isinstance(result.child, NotExpr)
+        assert result.child.child == FilterExpr(col="a", op=">", val=5)
+
+    def test_not_pyarrow(self):
+        node = NotExpr(child=FilterExpr(col="a", op=">", val=5))
+        expr = to_pyarrow_expr(node)
+        assert expr is not None
+
+    def test_not_or(self):
+        result = parse_expression("~(a > 5 | b < 1)")
+        assert isinstance(result, NotExpr)
+        assert isinstance(result.child, OrExpr)
