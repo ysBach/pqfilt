@@ -119,13 +119,6 @@ class TestReadOutput:
         assert len(reloaded) == 5
 
 
-class TestReadPerFileFalse:
-    def test_per_file_false(self, sample_parquet):
-        df = pqfilt.read(sample_parquet, filters="a > 5", per_file=False)
-        assert len(df) == 5
-        assert all(df["a"] > 5)
-
-
 class TestReadSpecialColumns:
     def test_space_in_column(self, sample_parquet):
         df = pqfilt.read(sample_parquet, filters="`x y` > 0.5")
@@ -159,10 +152,6 @@ class TestReadNullOperators:
         assert len(df) == 3
         assert df["id"].tolist() == [1, 3, 5]
 
-    def test_is_null_pandas_path(self, nullable_parquet):
-        df = pqfilt.read(nullable_parquet, filters="v is null", per_file=False)
-        assert len(df) == 2
-
     def test_is_null_tuple_syntax(self, nullable_parquet):
         df = pqfilt.read(nullable_parquet, filters=[("v", "is null", None)])
         assert len(df) == 2
@@ -176,10 +165,6 @@ class TestReadErrors:
     def test_invalid_filter_type(self, sample_parquet):
         with pytest.raises(TypeError):
             pqfilt.read(sample_parquet, filters=42)
-
-    def test_missing_column_pandas_path_raises_keyerror(self, sample_parquet):
-        with pytest.raises(KeyError, match="no_such_col"):
-            pqfilt.read(sample_parquet, filters="no_such_col > 0", per_file=False)
 
 
 @pytest.fixture()
@@ -242,8 +227,3 @@ class TestReadNegation:
         df = pqfilt.read(sample_parquet, filters="~(a <= 2 | a >= 9)")
         assert len(df) == 6
         assert all((df["a"] > 2) & (df["a"] < 9))
-
-    def test_not_pandas_path(self, sample_parquet):
-        df = pqfilt.read(sample_parquet, filters="~(a > 5)", per_file=False)
-        assert all(df["a"] <= 5)
-        assert len(df) == 5

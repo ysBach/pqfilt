@@ -10,7 +10,7 @@ Usage::
 
 from __future__ import annotations
 
-from .core import read
+from .core import read, filter_df
 from ._parser import parse_expression, FilterExpr, AndExpr, OrExpr, NotExpr
 
-__all__ = ["read", "parse_expression", "FilterExpr", "AndExpr", "OrExpr", "NotExpr"]
+__all__ = ["read", "filter_df", "parse_expression", "FilterExpr", "AndExpr", "OrExpr", "NotExpr"]

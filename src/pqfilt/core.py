@@ -12,7 +12,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
-from ._operators import apply_filter_operator, validate_operator
+from ._operators import validate_operator
 from ._parser import (
     AndExpr,
     ExprNode,
@@ -23,7 +23,7 @@ from ._parser import (
     to_pyarrow_expr,
 )
 
-__all__ = ["read"]
+__all__ = ["read", "filter_df"]
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +118,6 @@ def read(
     *,
     filters: str | list | ExprNode | None = None,
     columns: list[str] | None = None,
-    per_file: bool = True,
     output: str | Path | None = None,
     overwrite: bool = False,
 ) -> pd.DataFrame:
@@ -140,6 +139,8 @@ def read(
             "vmag < 20"
             "(a < 30 & b > 50) | c == 1"
             "desig in 1,2,3"
+            "~(a > 5)"
+            "v is null"
 
         **List of 3-tuples** (flat AND)::
 
@@ -149,15 +150,11 @@ def read(
 
             [[("a", ">", 5)], [("b", "<", 10)]]
 
-        **Pre-parsed AST node** (``FilterExpr``, ``AndExpr``, ``OrExpr``).
+        **Pre-parsed AST node** (``FilterExpr``, ``AndExpr``, ``OrExpr``,
+        ``NotExpr``).
 
     columns : list of str, optional
         Columns to load (projection pushdown).  ``None`` loads all columns.
-    per_file : bool, optional
-        If ``True`` (default), apply the filter to each file independently
-        and concatenate.  Better memory efficiency for many large files.
-        If ``False``, concatenate first, then apply pandas-level filtering
-        (useful when the filter cannot be pushed down).
     output : str or Path, optional
         Save the result to this path (``.parquet`` or ``.csv``).
     overwrite : bool, optional
@@ -189,6 +186,14 @@ def read(
 
         df = pqfilt.read("data.parquet", filters="(a < 30 & b > 50) | c == 1")
 
+    Negation::
+
+        df = pqfilt.read("data.parquet", filters="~(a > 5)")
+
+    Null check::
+
+        df = pqfilt.read("data.parquet", filters="v is null")
+
     Tuple syntax::
 
         df = pqfilt.read("data.parquet", filters=[("a", ">", 5), ("b", "<", 10)])
@@ -197,7 +202,6 @@ def read(
 
     # -- normalise filters to a pyarrow Expression (or None) --
     pa_filter: Any | None = None
-    ast: ExprNode | None = None
 
     if filters is not None:
         if isinstance(filters, str):
@@ -215,16 +219,8 @@ def read(
     # C++ thread pool), so we build one dataset over all files instead of
     # looping per-file at the Python level.
     dataset = ds.dataset(files, format="parquet")
-    out_table: pa.Table | None = None
-    if per_file:
-        out_table = dataset.to_table(columns=columns, filter=pa_filter)
-        result = out_table.to_pandas()
-    else:
-        # Load everything first, then filter with pandas.
-        table = dataset.to_table(columns=columns)
-        result = table.to_pandas()
-        if ast is not None:
-            result = _apply_pandas_filter(result, ast)
+    out_table: pa.Table = dataset.to_table(columns=columns, filter=pa_filter)
+    result = out_table.to_pandas()
 
     # -- save --
     if output is not None:
@@ -233,49 +229,102 @@ def read(
             raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
         if out.suffix.lower() == ".csv":
             result.to_csv(out, index=False)
-        elif out_table is not None:
+        else:
             # Direct Arrow -> parquet preserves type fidelity (timestamp tz,
             # decimal, large_string, etc.) that a pandas round-trip would drop.
             pq.write_table(out_table, out)
-        else:
-            result.to_parquet(out, index=False)
         log.info("Saved %d rows to %s", len(result), out)
 
     return result
 
 
-# -----------------------------------------------------------------
-# Pandas-level filtering (for per_file=False path)
-# -----------------------------------------------------------------
+def filter_df(
+    df: pd.DataFrame,
+    filters: str | list | ExprNode,
+) -> pd.DataFrame:
+    """Filter an already-loaded pandas DataFrame using the pqfilt expression syntax.
 
-
-def _apply_pandas_filter(df: pd.DataFrame, node: ExprNode) -> pd.DataFrame:
-    """Apply a parsed filter AST to a pandas DataFrame.
+    Applies the same filter language as :func:`read` — expression strings,
+    tuple lists, DNF, and pre-parsed AST nodes — directly to a DataFrame.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Input data.
-    node : ExprNode
-        Parsed filter AST.
+    filters : str, list, or ExprNode
+        Filter specification (same formats accepted by :func:`read`).
 
     Returns
     -------
     pandas.DataFrame
         Filtered rows with reset index.
+
+    Raises
+    ------
+    KeyError
+        A column named in the filter does not exist in *df*.
+    TypeError
+        *filters* is not a supported type.
+    ValueError
+        Invalid filter syntax.
+
+    Examples
+    --------
+    ::
+
+        import pandas as pd
+        import pqfilt
+
+        df = pd.DataFrame({"a": range(10), "b": range(0, 100, 10)})
+
+        pqfilt.filter_df(df, "a > 5")
+        pqfilt.filter_df(df, "a > 3 & b < 80")
+        pqfilt.filter_df(df, "~(a in 1,2,3)")
+        pqfilt.filter_df(df, [("a", ">", 5), ("b", "<", 90)])
     """
-    mask = _eval_node(df, node)
+    if isinstance(filters, str):
+        ast = parse_expression(filters)
+    elif isinstance(filters, list):
+        ast = _tuples_to_ast(filters)
+    elif isinstance(filters, (FilterExpr, AndExpr, OrExpr, NotExpr)):
+        ast = filters
+    else:
+        raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
+    mask = _eval_node(df, ast)
     return df[mask].reset_index(drop=True)
 
 
 def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
-    """Recursively evaluate an AST node to a boolean Series."""
+    """Recursively evaluate an AST node to a boolean mask over *df*."""
     if isinstance(node, FilterExpr):
         if node.col not in df.columns:
             raise KeyError(
                 f"Column {node.col!r} not found in DataFrame. Available columns: {list(df.columns)}"
             )
-        return apply_filter_operator(node.op, df[node.col], node.val)
+        col = df[node.col]
+        op, val = node.op, node.val
+        if op == ">":
+            return col > val
+        elif op == ">=":
+            return col >= val
+        elif op == "<":
+            return col < val
+        elif op == "<=":
+            return col <= val
+        elif op == "==":
+            return col == val
+        elif op == "!=":
+            return col != val
+        elif op == "in":
+            return col.isin(val)
+        elif op == "not in":
+            return ~col.isin(val)
+        elif op == "is null":
+            return col.isna()
+        elif op == "is not null":
+            return col.notna()
+        else:
+            raise ValueError(f"Unsupported operator: {op!r}")
     elif isinstance(node, AndExpr):
         mask = _eval_node(df, node.children[0])
         for child in node.children[1:]:

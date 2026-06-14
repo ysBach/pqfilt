@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 SUPPORTED_OPERATORS: tuple[str, ...] = (
     ">",
     ">=",
@@ -39,61 +37,6 @@ def validate_operator(op: str, col: str | None = None) -> None:
             f"Unsupported operator '{op}'{ctx}. "
             f"Supported: {', '.join(repr(o) for o in SUPPORTED_OPERATORS)}"
         )
-
-
-def apply_filter_operator(op: str, left: Any, right: Any) -> Any:
-    """Apply *op* to *left* and *right* operands.
-
-    Works with both ``pyarrow.compute.Expression`` (via ``ds.field``) and
-    ``pandas.Series`` / NumPy arrays.
-
-    Parameters
-    ----------
-    op : str
-        One of ``SUPPORTED_OPERATORS``.
-    left : pyarrow.Expression, pandas.Series, or array-like
-        Left operand.
-    right : scalar or array-like
-        Right operand.
-
-    Returns
-    -------
-    result
-        Boolean expression or mask.
-
-    Raises
-    ------
-    ValueError
-        If *op* is unsupported.
-    TypeError
-        If ``in`` / ``not in`` is used with an operand lacking ``isin()``.
-    """
-    if op == ">":
-        return left > right
-    elif op == ">=":
-        return left >= right
-    elif op == "<":
-        return left < right
-    elif op == "<=":
-        return left <= right
-    elif op == "==":
-        return left == right
-    elif op == "!=":
-        return left != right
-    elif op == "in":
-        if hasattr(left, "isin"):
-            return left.isin(right)
-        raise TypeError(f"'in' operator requires isin() method, got {type(left)}")
-    elif op == "not in":
-        if hasattr(left, "isin"):
-            return ~left.isin(right)
-        raise TypeError(f"'not in' operator requires isin() method, got {type(left)}")
-    elif op == "is null":
-        return left.isna()
-    elif op == "is not null":
-        return left.notna()
-    else:
-        validate_operator(op)
 
 
 def to_numeric_if_possible(value_str: str) -> int | float | bool | str:
