@@ -14,4 +14,3 @@ from .core import read
 from ._parser import parse_expression, FilterExpr, AndExpr, OrExpr
 
 __all__ = ["read", "parse_expression", "FilterExpr", "AndExpr", "OrExpr"]
-__version__ = "0.1.0"
