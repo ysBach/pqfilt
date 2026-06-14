@@ -3,7 +3,8 @@
 project = "pqfilt"
 copyright = "2026, Yoonsoo P. Bach"
 author = "Yoonsoo P. Bach"
-release = "0.1.0"
+from importlib.metadata import version as _version
+release = _version("pqfilt")
 
 # -- General configuration ---------------------------------------------------
 
