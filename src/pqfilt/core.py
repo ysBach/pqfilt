@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 
 from ._operators import apply_filter_operator, validate_operator
 from ._parser import (
@@ -216,9 +218,10 @@ def read(
     # C++ thread pool), so we build one dataset over all files instead of
     # looping per-file at the Python level.
     dataset = ds.dataset(files, format="parquet")
+    out_table: pa.Table | None = None
     if per_file:
-        table = dataset.to_table(columns=columns, filter=pa_filter)
-        result = table.to_pandas()
+        out_table = dataset.to_table(columns=columns, filter=pa_filter)
+        result = out_table.to_pandas()
     else:
         # Load everything first, then filter with pandas.
         table = dataset.to_table(columns=columns)
@@ -235,6 +238,10 @@ def read(
             )
         if out.suffix.lower() == ".csv":
             result.to_csv(out, index=False)
+        elif out_table is not None:
+            # Direct Arrow -> parquet preserves type fidelity (timestamp tz,
+            # decimal, large_string, etc.) that a pandas round-trip would drop.
+            pq.write_table(out_table, out)
         else:
             result.to_parquet(out, index=False)
         log.info("Saved %d rows to %s", len(result), out)
