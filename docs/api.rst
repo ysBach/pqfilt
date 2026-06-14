@@ -8,6 +8,8 @@ Core
 
 .. autofunction:: pqfilt.read
 
+.. autofunction:: pqfilt.filter_df
+
 Expression Parser
 -----------------
 
@@ -24,9 +26,4 @@ AST Nodes
 
 .. autoclass:: pqfilt.OrExpr
 
-Operators
----------
-
-.. automodule:: pqfilt._operators
-   :members:
-   :undoc-members:
+.. autoclass:: pqfilt.NotExpr

@@ -45,6 +45,49 @@ Expressions support ``&`` (AND), ``|`` (OR), and parentheses for grouping.
     # Mixed with parentheses
     df = pqfilt.read("data.parquet", filters="(a < 3 & b > 50) | c == 1")
 
+Negation
+~~~~~~~~
+
+Prefix any sub-expression with ``~`` to negate it.  ``~`` binds tighter than
+``&``/``|``, so use parentheses to negate a compound expression::
+
+    # rows where a is NOT greater than 5
+    df = pqfilt.read("data.parquet", filters="~(a > 5)")
+
+    # AND with a negated membership test
+    df = pqfilt.read("data.parquet", filters="a > 5 & ~(b in 1,2)")
+
+    # negate an OR
+    df = pqfilt.read("data.parquet", filters="~(a <= 2 | a >= 9)")
+
+Null Checks
+~~~~~~~~~~~
+
+Use ``is null`` and ``is not null`` to filter rows by the presence or absence
+of a value.  These operators take no right-hand value::
+
+    df = pqfilt.read("data.parquet", filters="v is null")
+    df = pqfilt.read("data.parquet", filters="v is not null")
+
+    # combined with other conditions
+    df = pqfilt.read("data.parquet", filters="a > 5 & b is null")
+
+Tuple syntax accepts ``None`` as the value::
+
+    df = pqfilt.read("data.parquet", filters=[("v", "is null", None)])
+    df = pqfilt.read("data.parquet", filters=[("v", "is not null", None)])
+
+Boolean Columns
+~~~~~~~~~~~~~~~
+
+Boolean literals ``True`` / ``False`` (any capitalisation) are recognised
+and converted to Python ``bool`` before being passed to PyArrow, avoiding
+type-mismatch errors during predicate pushdown::
+
+    df = pqfilt.read("data.parquet", filters="is_comet == True")
+    df = pqfilt.read("data.parquet", filters="is_comet == false")
+    df = pqfilt.read("data.parquet", filters="is_comet != TRUE")
+
 Membership Filters
 ~~~~~~~~~~~~~~~~~~
 
@@ -107,6 +150,24 @@ Save filtered results directly::
 
     df = pqfilt.read("data.parquet", filters="a > 5", output="out.parquet")
     df = pqfilt.read("data.parquet", filters="a > 5", output="out.csv")
+
+Filtering a Loaded DataFrame
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use :func:`pqfilt.filter_df` to apply the same expression syntax to a
+DataFrame already in memory::
+
+    import pandas as pd
+    import pqfilt
+
+    df = pd.read_csv("data.csv")  # or any other source
+
+    out = pqfilt.filter_df(df, "a > 5 & b < 80")
+    out = pqfilt.filter_df(df, "~(a in 1,2,3)")
+    out = pqfilt.filter_df(df, "v is not null")
+
+All operators, boolean literals, backtick-quoted column names, and tuple/DNF
+syntax work identically to :func:`pqfilt.read`.
 
 CLI Usage
 ---------

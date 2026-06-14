@@ -28,6 +28,18 @@ df = pqfilt.read("data.parquet", filters="vmag < 20")
 # AND + OR with expression syntax
 df = pqfilt.read("data.parquet", filters="(a < 30 & b > 50) | c == 1")
 
+# Negation with ~ prefix
+df = pqfilt.read("data.parquet", filters="~(a > 5)")
+df = pqfilt.read("data.parquet", filters="a > 5 & ~(b in 1,2,'1','2')")
+
+# Null checks
+df = pqfilt.read("data.parquet", filters="v is null")
+df = pqfilt.read("data.parquet", filters="v is not null")
+
+# Boolean columns
+df = pqfilt.read("data.parquet", filters="is_comet == True")
+df = pqfilt.read("data.parquet", filters="is_comet != false")
+
 # Membership filter (explicit quotes preserve string types, e.g., to prevent Parquet type errors)
 # Supported array formats: "val1, val2", "(val1, val2)", "[val1, val2]"
 df = pqfilt.read("data.parquet", filters="desig in '1', '2', '3'")
@@ -36,6 +48,9 @@ df = pqfilt.read("data.parquet", filters="desig in ['1', '2', '3']")
 
 # Tuple syntax (flat AND)
 df = pqfilt.read("data.parquet", filters=[("a", "<", 30), ("b", ">", 50)])
+
+# Tuple syntax with null checks
+df = pqfilt.read("data.parquet", filters=[("v", "is null", None)])
 
 # DNF syntax (OR of ANDs)
 df = pqfilt.read("data.parquet", filters=[
