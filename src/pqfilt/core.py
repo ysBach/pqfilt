@@ -282,13 +282,13 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
             )
         return apply_filter_operator(node.op, df[node.col], node.val)
     elif isinstance(node, AndExpr):
-        mask = pd.Series(True, index=df.index)
-        for child in node.children:
+        mask = _eval_node(df, node.children[0])
+        for child in node.children[1:]:
             mask = mask & _eval_node(df, child)
         return mask
     elif isinstance(node, OrExpr):
-        mask = pd.Series(False, index=df.index)
-        for child in node.children:
+        mask = _eval_node(df, node.children[0])
+        for child in node.children[1:]:
             mask = mask | _eval_node(df, child)
         return mask
     else:
