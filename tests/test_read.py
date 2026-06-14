@@ -142,6 +142,12 @@ class TestReadErrors:
         with pytest.raises(TypeError):
             pqfilt.read(sample_parquet, filters=42)
 
+    def test_missing_column_pandas_path_raises_keyerror(self, sample_parquet):
+        with pytest.raises(KeyError, match="no_such_col"):
+            pqfilt.read(
+                sample_parquet, filters="no_such_col > 0", per_file=False
+            )
+
 
 @pytest.fixture()
 def bool_parquet(tmp_path):

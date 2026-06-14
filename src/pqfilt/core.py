@@ -281,8 +281,10 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
     """Recursively evaluate an AST node to a boolean Series."""
     if isinstance(node, FilterExpr):
         if node.col not in df.columns:
-            log.warning("Column %r not found in DataFrame; skipping filter.", node.col)
-            return pd.Series(True, index=df.index)
+            raise KeyError(
+                f"Column {node.col!r} not found in DataFrame. "
+                f"Available columns: {list(df.columns)}"
+            )
         return apply_filter_operator(node.op, df[node.col], node.val)
     elif isinstance(node, AndExpr):
         mask = pd.Series(True, index=df.index)
