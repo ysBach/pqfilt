@@ -4,10 +4,16 @@ Generic Parquet filtering tool (CLI and Python API).
 
 [ReadtheDocs Documentation](https://pqfilt.readthedocs.io/en/latest/).
 
-Originally developed while dealing with large Parquet files in [SPHEREx mission](https://spherex.caltech.edu/) ([GitHub](https://github.com/SPHEREx)).
+* Originally developed while dealing with large Parquet files in [SPHEREx mission](https://spherex.caltech.edu/) ([GitHub](https://github.com/SPHEREx)).
 
+## Main Purpose
 `pqfilt` wraps `pyarrow.dataset` to let you filter Parquet files **before** they
-are fully read into memory, using row-group-level filtering.
+are fully read into memory, using row-group-level filtering. This is very efficient/fast.
+
+* Using `pqfilt.read()` with filters will be orders of magnitude faster than `pd.read_parquet()` for large datasets.
+* The syntax is designed to be intuitive and flexible
+   * e.g., "a > 5 & ~(b in 1,2) & v is not null" is much simpler than the equivalent `pyarrow` expression syntax or chaining multiple DataFrame filters together.
+* Even if you already loaded a DataFrame, you can use `pqfilt.filter_df(df, 'a > 5 & ~(b in 1,2) & v is not null')` to apply the same filter syntax to it.
 
 ## Installation
 
