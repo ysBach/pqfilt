@@ -60,6 +60,10 @@ df = pqfilt.read("data.parquet", filters=[
 
 # Column selection + output
 df = pqfilt.read("data/*.parquet", columns=["a", "b"], output="out.parquet")
+
+# Filter an already-loaded DataFrame (same syntax)
+df = pd.read_csv("data.csv")
+filtered = pqfilt.filter_df(df, "a > 5 & ~(b in 1,2) & v is not null")
 ```
 
 ## CLI
