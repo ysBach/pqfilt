@@ -133,6 +133,36 @@ class TestReadSpecialColumns:
         assert all(df["r*1000"] >= 500)
 
 
+class TestReadNullOperators:
+    @pytest.fixture
+    def nullable_parquet(self, tmp_path):
+        path = tmp_path / "nullable.parquet"
+        df = pd.DataFrame({
+            "id": [1, 2, 3, 4, 5],
+            "v": [1.0, None, 3.0, None, 5.0],
+        })
+        df.to_parquet(path, index=False)
+        return str(path)
+
+    def test_is_null_pushdown(self, nullable_parquet):
+        df = pqfilt.read(nullable_parquet, filters="v is null")
+        assert len(df) == 2
+        assert df["id"].tolist() == [2, 4]
+
+    def test_is_not_null_pushdown(self, nullable_parquet):
+        df = pqfilt.read(nullable_parquet, filters="v is not null")
+        assert len(df) == 3
+        assert df["id"].tolist() == [1, 3, 5]
+
+    def test_is_null_pandas_path(self, nullable_parquet):
+        df = pqfilt.read(nullable_parquet, filters="v is null", per_file=False)
+        assert len(df) == 2
+
+    def test_is_null_tuple_syntax(self, nullable_parquet):
+        df = pqfilt.read(nullable_parquet, filters=[("v", "is null", None)])
+        assert len(df) == 2
+
+
 class TestReadErrors:
     def test_nonexistent_file(self):
         with pytest.raises(FileNotFoundError):

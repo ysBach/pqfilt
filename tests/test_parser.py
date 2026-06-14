@@ -145,6 +145,39 @@ class TestToPyarrowExpr:
         assert expr is not None
 
 
+class TestNullOperators:
+    def test_is_null(self):
+        result = parse_expression("x is null")
+        assert result == FilterExpr(col="x", op="is null", val=None)
+
+    def test_is_not_null(self):
+        result = parse_expression("x is not null")
+        assert result == FilterExpr(col="x", op="is not null", val=None)
+
+    def test_is_null_extra_whitespace(self):
+        result = parse_expression("x   is    null")
+        assert result == FilterExpr(col="x", op="is null", val=None)
+
+    def test_is_null_with_value_raises(self):
+        with pytest.raises(ValueError, match="takes no value"):
+            parse_expression("x is null 5")
+
+    def test_is_null_in_compound(self):
+        result = parse_expression("a > 5 & b is null")
+        assert result == AndExpr(
+            children=(
+                FilterExpr(col="a", op=">", val=5),
+                FilterExpr(col="b", op="is null", val=None),
+            )
+        )
+
+    def test_is_null_pyarrow(self):
+        expr = to_pyarrow_expr(parse_expression("x is null"))
+        assert expr is not None
+        expr = to_pyarrow_expr(parse_expression("x is not null"))
+        assert expr is not None
+
+
 class TestQuotedLiterals:
     """String literals must survive structural characters (&, |, (, ), ,)."""
 

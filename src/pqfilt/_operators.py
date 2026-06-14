@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-SUPPORTED_OPERATORS: tuple[str, ...] = (">", ">=", "<", "<=", "==", "!=", "in", "not in")
+SUPPORTED_OPERATORS: tuple[str, ...] = (
+    ">",
+    ">=",
+    "<",
+    "<=",
+    "==",
+    "!=",
+    "in",
+    "not in",
+    "is null",
+    "is not null",
+)
 
 
 def validate_operator(op: str, col: str | None = None) -> None:
@@ -77,6 +88,10 @@ def apply_filter_operator(op: str, left: Any, right: Any) -> Any:
         if hasattr(left, "isin"):
             return ~left.isin(right)
         raise TypeError(f"'not in' operator requires isin() method, got {type(left)}")
+    elif op == "is null":
+        return left.isna()
+    elif op == "is not null":
+        return left.notna()
     else:
         validate_operator(op)
 

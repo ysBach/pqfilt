@@ -36,9 +36,10 @@ __all__ = [
     "to_pyarrow_expr",
 ]
 
-# Operators ordered longest-first so '>=' is matched before '>'.
+# Operators ordered longest-first so '>=' is matched before '>', and
+# 'is not null' before 'is null'.
 _OPERATOR_PATTERN = re.compile(
-    r"(>=|<=|!=|==|not\s+in\b|in\b|>|<)"
+    r"(>=|<=|!=|==|is\s+not\s+null\b|is\s+null\b|not\s+in\b|in\b|>|<)"
 )
 
 # Backtick-quoted column name.
@@ -290,6 +291,15 @@ def _parse_comparison(blob: str) -> FilterExpr:
     validate_operator(op)
 
     val_str = rest[m_op.end():].strip()
+
+    # `is null` / `is not null` are unary -- no right-hand value.
+    if op in ("is null", "is not null"):
+        if val_str:
+            raise ValueError(
+                f"Operator {op!r} takes no value, got {val_str!r} in: {blob!r}"
+            )
+        return FilterExpr(col=col, op=op, val=None)
+
     if not val_str:
         raise ValueError(f"Missing value after operator in: {blob!r}")
 
@@ -441,6 +451,10 @@ def _filter_to_pa(node: FilterExpr) -> ds.Expression:
         return field.isin(val)
     elif op == "not in":
         return ~field.isin(val)
+    elif op == "is null":
+        return field.is_null()
+    elif op == "is not null":
+        return field.is_valid()
     else:
         raise ValueError(f"Unsupported operator: {op!r}")
 
