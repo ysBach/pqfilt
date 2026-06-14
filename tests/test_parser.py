@@ -143,3 +143,31 @@ class TestToPyarrowExpr:
         node = FilterExpr(col="desig", op="in", val=[1, 2, 3])
         expr = to_pyarrow_expr(node)
         assert expr is not None
+
+
+class TestQuotedLiterals:
+    """String literals must survive structural characters (&, |, (, ), ,)."""
+
+    def test_pipe_inside_string_value(self):
+        result = parse_expression("name == 'a|b'")
+        assert result == FilterExpr(col="name", op="==", val="a|b")
+
+    def test_amp_inside_string_value(self):
+        result = parse_expression("name == 'a&b'")
+        assert result == FilterExpr(col="name", op="==", val="a&b")
+
+    def test_paren_inside_string_value(self):
+        result = parse_expression("name == 'foo(bar)'")
+        assert result == FilterExpr(col="name", op="==", val="foo(bar)")
+
+    def test_pipe_inside_backticked_column(self):
+        result = parse_expression("`a|b` > 5")
+        assert result == FilterExpr(col="a|b", op=">", val=5)
+
+    def test_comma_inside_quoted_in_list(self):
+        result = parse_expression("desig in 'a,b', 'c'")
+        assert result == FilterExpr(col="desig", op="in", val=["a,b", "c"])
+
+    def test_double_quoted_value(self):
+        result = parse_expression('name == "a|b"')
+        assert result == FilterExpr(col="name", op="==", val="a|b")

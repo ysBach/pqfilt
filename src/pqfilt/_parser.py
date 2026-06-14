@@ -120,6 +120,7 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
     i = 0
     n = len(expression)
     buf: list[str] = []
+    quote: str | None = None  # active quote char: "'", '"', or '`'
 
     def flush_buf() -> None:
         text = "".join(buf).strip()
@@ -129,6 +130,20 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
 
     while i < n:
         ch = expression[i]
+        if quote is not None:
+            # Inside a quoted span: pass through verbatim until the matching
+            # closing quote. Structural chars (&, |, (, )) have no meaning
+            # here -- they are part of the column name or value.
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
         if ch == "(":
             flush_buf()
             tokens.append(("LPAREN", "("))
@@ -181,7 +196,7 @@ def _parse_value_list(raw: str) -> list[Any]:
         raw = raw[1:-1]
 
     parts = []
-    for p in raw.split(","):
+    for p in _split_top_level_commas(raw):
         p = p.strip()
         if not p:
             continue
@@ -198,6 +213,30 @@ def _parse_value_list(raw: str) -> list[Any]:
         else:
             parts.append(to_numeric_if_possible(p))
     return parts
+
+
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split *s* on commas not inside ``'``/``"`` quoted spans."""
+    out: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    for ch in s:
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            continue
+        if ch == ",":
+            out.append("".join(buf))
+            buf.clear()
+            continue
+        buf.append(ch)
+    out.append("".join(buf))
+    return out
 
 
 def _parse_comparison(blob: str) -> FilterExpr:
