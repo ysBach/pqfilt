@@ -212,31 +212,19 @@ def read(
         pa_filter = to_pyarrow_expr(ast)
 
     # -- read --
+    # pyarrow.dataset handles multi-file scans natively (parallel I/O via its
+    # C++ thread pool), so we build one dataset over all files instead of
+    # looping per-file at the Python level.
+    dataset = ds.dataset(files, format="parquet")
     if per_file:
-        dfs: list[pd.DataFrame] = []
-        for fpath in files:
-            dataset = ds.dataset(fpath, format="parquet")
-            table = dataset.to_table(columns=columns, filter=pa_filter)
-            df = table.to_pandas()
-            if not df.empty:
-                dfs.append(df)
-        result = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        table = dataset.to_table(columns=columns, filter=pa_filter)
+        result = table.to_pandas()
     else:
         # Load everything first, then filter with pandas.
-        dfs = []
-        for fpath in files:
-            dataset = ds.dataset(fpath, format="parquet")
-            table = dataset.to_table(columns=columns)
-            df = table.to_pandas()
-            if not df.empty:
-                dfs.append(df)
-
-        if not dfs:
-            result = pd.DataFrame()
-        else:
-            result = pd.concat(dfs, ignore_index=True)
-            if ast is not None:
-                result = _apply_pandas_filter(result, ast)
+        table = dataset.to_table(columns=columns)
+        result = table.to_pandas()
+        if ast is not None:
+            result = _apply_pandas_filter(result, ast)
 
     # -- save --
     if output is not None:
