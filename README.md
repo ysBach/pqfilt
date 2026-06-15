@@ -11,6 +11,8 @@ Generic Parquet filtering tool (CLI and Python API).
 are fully read into memory, using row-group-level filtering. This is very efficient/fast.
 
 * Using `pqfilt.read()` with filters will be orders of magnitude faster than `pd.read_parquet()` for large datasets.
+  * **240× faster** on the SPHEREx's SSO ephemeris database (111 files, 139M rows; a 10-day `jd_tdb` window skips 107 of 111 files entirely, 64 ms vs 15 s);
+  * **1.8–2.3× faster** on a 3.6M-row SPHEREx source catalog (single row group, compound filter, all/4 columns); gains are larger when the file has many files/row groups or sits on disk.
 * The syntax is designed to be intuitive and flexible
    * e.g., "a > 5 & ~(b in 1,2) & v is not null" is much simpler than the equivalent `pyarrow` expression syntax or chaining multiple DataFrame filters together.
 * Even if you already loaded a DataFrame, you can use `pqfilt.filter_df(df, 'a > 5 & ~(b in 1,2) & v is not null')` to apply the same filter syntax to it.

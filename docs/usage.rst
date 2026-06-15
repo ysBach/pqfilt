@@ -14,6 +14,73 @@ From source::
     cd pqfilt
     pip install -e .
 
+Performance
+-----------
+
+pqfilt applies filters in Arrow C++ *before* converting to a pandas
+DataFrame, so rows that would be discarded are never materialised.
+When a file has multiple row groups and the filter is on a sorted or
+clustered column, pyarrow can skip entire row groups without reading
+them — giving much larger speedups.
+
+Benchmark 1 — SPHEREx source catalog (single row group)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Real 3.6M-row SPHEREx catalog (``srccat_2026W07``, 1 row group, 315 MB,
+32 columns, warm OS page cache)::
+
+    filter = "ra is not null & dec > -55 & (WISE_W1 > 0 | mag_det1 < 19.5)"
+
+    # pqfilt
+    df = pqfilt.read(path, filters=filter)
+    df = pqfilt.read(path, filters=filter, columns=["ra", "dec", "WISE_W1", "mag_det1"])
+
+    # pandas equivalent
+    df = pd.read_parquet(path)
+    df = df[df["ra"].notna() & (df["dec"] > -55) & ((df["WISE_W1"] > 0) | (df["mag_det1"] < 19.5))]
+
+Results (median of 7 runs, 529,760 / 3,619,247 rows = 14.6% kept)::
+
+                                      pandas   pqfilt  speedup
+    all 32 columns
+      load + filter (total)          191.8 ms  107.3 ms   1.8×
+
+    4 columns (projection)
+      load + filter (total)           42.5 ms   18.7 ms   2.3×
+
+With a single row group the gain comes from skipping pandas
+materialisation of discarded rows.  Adding ``columns=`` further reduces
+I/O and conversion work.
+
+Benchmark 2 — multi-file glob (file skipping)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Real SPHEREx-SSO ephemeris database: 111 ``.parq`` files, 139M rows,
+22 columns, warm OS page cache.  Each file covers a distinct
+observation window; filtering by Julian Date lets pyarrow skip files
+whose ``jd_tdb`` range does not overlap the query::
+
+    filter = "jd_tdb > 2460820 & jd_tdb < 2460830"   # 10-day window → 4 of 111 files
+
+Results (3,926,822 / 139,146,431 rows = 2.8% kept)::
+
+                              pandas                 pqfilt  speedup
+    read all + filter in RAM  15,403 ms (11.3 + 4.1 s)  64 ms   240×
+
+pyarrow reads each file's footer statistics and skips the 107 files
+whose ``jd_tdb`` range lies entirely outside the query window, reading
+only the 4 matching files.
+
+When to expect which speedup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **~2×** — single-file, single row group; gain is from avoiding pandas
+  materialisation of filtered-out rows.
+* **~10–100×** — many row groups in one file with the filter column
+  sorted or clustered.
+* **100×+** — multi-file dataset where the filter can exclude entire
+  files based on their per-file min/max statistics.
+
 Python API
 ----------
 
