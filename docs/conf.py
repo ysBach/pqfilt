@@ -1,9 +1,10 @@
 # Configuration file for the Sphinx documentation builder.
 
+from importlib.metadata import version as _version
+
 project = "pqfilt"
 copyright = "2026, Yoonsoo P. Bach"
 author = "Yoonsoo P. Bach"
-from importlib.metadata import version as _version
 release = _version("pqfilt")
 
 # -- General configuration ---------------------------------------------------
