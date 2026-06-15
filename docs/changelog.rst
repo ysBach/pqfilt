@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.2.1 (2026-06-15)
+--------------------
+
+* Exported ``to_pyarrow_expr`` in the public API (previously internal).
+
 v0.2.0 (2026-06-15)
 --------------------
 
