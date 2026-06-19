@@ -1,6 +1,11 @@
 Changelog
 =========
 
+v0.2.2 (2026-06-19)
+--------------------
+
+* Critical bug in CLI: ``per_file`` option was removed in 0.2.0 but CLI still referenced it, causing a crash. Fixed.
+
 v0.2.1 (2026-06-15)
 --------------------
 

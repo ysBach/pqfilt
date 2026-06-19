@@ -32,8 +32,8 @@ from .core import read
 @click.option("--columns", default=None, help="Comma-separated list of columns to include.")
 @click.option(
     "--per-file/--no-per-file",
-    default=True,
-    help="Filter each file separately (default) vs. load all first.",
+    expose_value=False,
+    help="Deprecated no-op; PyArrow dataset scanning is always used.",
 )
 def main(
     files: tuple[str, ...],
@@ -41,7 +41,6 @@ def main(
     output: str,
     overwrite: bool,
     columns: str | None,
-    per_file: bool,
 ) -> None:
     """Filter Parquet files with predicate pushdown.
 
@@ -85,7 +84,6 @@ def main(
             source=filelist,
             filters=combined_filter,
             columns=columns_list,
-            per_file=per_file,
             output=output,
             overwrite=overwrite,
         )
