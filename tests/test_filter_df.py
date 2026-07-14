@@ -154,3 +154,16 @@ class TestFilterDfErrors:
     def test_invalid_type(self, df):
         with pytest.raises(TypeError):
             pqfilt.filter_df(df, 42)
+
+    @pytest.mark.parametrize(
+        ("filters", "message"),
+        [
+            ([[("a", "~=", 1)]], "Unsupported operator"),
+            ([[("a", ">", 1, "extra")]], "3-tuple"),
+            ([[]], "must contain at least one"),
+            ([[("a", ">", 1)], ("b", "<", 2)], "must be a list"),
+        ],
+    )
+    def test_invalid_dnf_filters_raise_value_error(self, df, filters, message):
+        with pytest.raises(ValueError, match=message):
+            pqfilt.filter_df(df, filters)

@@ -29,6 +29,31 @@ __all__ = ["read", "scan", "write_filtered", "filter_df", "to_ast"]
 log = logging.getLogger(__name__)
 
 
+def _tuple_to_leaf(item: Any) -> FilterExpr:
+    """Validate a filter tuple and convert it to a leaf AST node.
+
+    Parameters
+    ----------
+    item : Any
+        Candidate ``(column, operator, value)`` tuple.
+
+    Returns
+    -------
+    FilterExpr
+        Validated filter leaf.
+
+    Raises
+    ------
+    ValueError
+        If *item* is not a 3-tuple or its operator is unsupported.
+    """
+    if not (isinstance(item, tuple) and len(item) == 3):
+        raise ValueError(f"Each filter must be a 3-tuple (col, op, val), got {item!r}")
+    col, op, val = item
+    validate_operator(op, col=col)
+    return FilterExpr(col=col, op=op, val=val)
+
+
 def _tuples_to_ast(filters: list) -> ExprNode:
     """Convert tuple-style filters to an AST node.
 
@@ -60,7 +85,11 @@ def _tuples_to_ast(filters: list) -> ExprNode:
         # DNF: each sub-list is an AND-group, groups are OR-ed.
         or_children: list[ExprNode] = []
         for group in filters:
-            and_children = [FilterExpr(col=c, op=o, val=v) for c, o, v in group]
+            if not isinstance(group, list):
+                raise ValueError(f"Each DNF group must be a list of filter tuples, got {group!r}")
+            if not group:
+                raise ValueError("Each DNF group must contain at least one filter tuple")
+            and_children = [_tuple_to_leaf(item) for item in group]
             if len(and_children) == 1:
                 or_children.append(and_children[0])
             else:
@@ -70,13 +99,7 @@ def _tuples_to_ast(filters: list) -> ExprNode:
         return OrExpr(children=tuple(or_children))
     else:
         # Flat AND
-        children = []
-        for item in filters:
-            if not (isinstance(item, tuple) and len(item) == 3):
-                raise ValueError(f"Each filter must be a 3-tuple (col, op, val), got {item!r}")
-            c, o, v = item
-            validate_operator(o, col=c)
-            children.append(FilterExpr(col=c, op=o, val=v))
+        children = [_tuple_to_leaf(item) for item in filters]
         if len(children) == 1:
             return children[0]
         return AndExpr(children=tuple(children))
