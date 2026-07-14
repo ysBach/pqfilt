@@ -10,10 +10,14 @@ Core
 
 .. autofunction:: pqfilt.filter_df
 
+.. autofunction:: pqfilt.to_ast
+
 Expression Parser
 -----------------
 
 .. autofunction:: pqfilt.parse_expression
+
+.. autofunction:: pqfilt.map_leaves
 
 .. autofunction:: pqfilt._parser.to_pyarrow_expr
 

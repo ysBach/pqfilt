@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 import pyarrow.dataset as ds
 
@@ -36,6 +36,7 @@ __all__ = [
     "AndExpr",
     "OrExpr",
     "NotExpr",
+    "map_leaves",
     "parse_expression",
     "to_pyarrow_expr",
 ]
@@ -85,7 +86,7 @@ class AndExpr:
         All children must evaluate to ``True``.
     """
 
-    children: tuple[FilterExpr | OrExpr | AndExpr, ...] = field(default_factory=tuple)
+    children: tuple["ExprNode", ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ class OrExpr:
         At least one child must evaluate to ``True``.
     """
 
-    children: tuple[FilterExpr | AndExpr | OrExpr, ...] = field(default_factory=tuple)
+    children: tuple["ExprNode", ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,46 @@ class NotExpr:
 
 # Type alias for any AST node.
 ExprNode = Union[FilterExpr, AndExpr, OrExpr, NotExpr]
+
+
+def map_leaves(
+    node: ExprNode,
+    fn: Callable[[FilterExpr], ExprNode],
+) -> ExprNode:
+    """Return a copy of an AST with each leaf transformed by ``fn``.
+
+    Parameters
+    ----------
+    node : ExprNode
+        AST node to transform.
+    fn : callable
+        Function that accepts a :class:`FilterExpr` and returns an AST node.
+        It may replace a leaf with a compound expression.
+
+    Returns
+    -------
+    ExprNode
+        Transformed AST. Compound nodes are reconstructed recursively.
+
+    Raises
+    ------
+    TypeError
+        If *fn* does not return an AST node.
+    """
+    if isinstance(node, FilterExpr):
+        transformed = fn(node)
+        if not isinstance(transformed, (FilterExpr, AndExpr, OrExpr, NotExpr)):
+            raise TypeError(
+                f"map_leaves callback must return an ExprNode, got {type(transformed).__name__}"
+            )
+        return transformed
+    if isinstance(node, AndExpr):
+        return AndExpr(children=tuple(map_leaves(child, fn) for child in node.children))
+    if isinstance(node, OrExpr):
+        return OrExpr(children=tuple(map_leaves(child, fn) for child in node.children))
+    if isinstance(node, NotExpr):
+        return NotExpr(child=map_leaves(node.child, fn))
+    raise TypeError(f"Unknown node type: {type(node)}")
 
 
 # -----------------------------------------------------------------

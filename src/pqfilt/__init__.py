@@ -10,14 +10,24 @@ Usage::
 
 from __future__ import annotations
 
-from .core import read, filter_df
-from ._parser import parse_expression, to_pyarrow_expr, FilterExpr, AndExpr, OrExpr, NotExpr
+from .core import filter_df, read, to_ast
+from ._parser import (
+    AndExpr,
+    FilterExpr,
+    NotExpr,
+    OrExpr,
+    map_leaves,
+    parse_expression,
+    to_pyarrow_expr,
+)
 
 __all__ = [
     "read",
     "filter_df",
+    "to_ast",
     "parse_expression",
     "to_pyarrow_expr",
+    "map_leaves",
     "FilterExpr",
     "AndExpr",
     "OrExpr",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+import pqfilt
+
 from pqfilt._parser import (
     AndExpr,
     FilterExpr,
@@ -161,6 +163,56 @@ class TestToPyarrowExpr:
         node = FilterExpr(col="desig", op="in", val=[1, 2, 3])
         expr = to_pyarrow_expr(node)
         assert expr is not None
+
+
+class TestAstUtilities:
+    def test_to_ast_accepts_all_supported_input_forms(self):
+        node = FilterExpr(col="a", op=">", val=5)
+
+        assert pqfilt.to_ast("a > 5") == node
+        assert pqfilt.to_ast([("a", ">", 5)]) == node
+        assert pqfilt.to_ast([[("a", ">", 5)], [("b", "<", 1)]]) == OrExpr(
+            children=(node, FilterExpr(col="b", op="<", val=1))
+        )
+        assert pqfilt.to_ast(node) is node
+
+    def test_map_leaves_recurses_and_allows_expansion(self):
+        node = NotExpr(
+            child=OrExpr(
+                children=(
+                    FilterExpr(col="a", op=">", val=5),
+                    FilterExpr(col="b", op="<", val=1),
+                )
+            )
+        )
+
+        def rewrite(leaf):
+            if leaf.col == "a":
+                return AndExpr(
+                    children=(
+                        FilterExpr(col="a_scaled", op=">", val=50),
+                        FilterExpr(col="a_valid", op="!=", val=0),
+                    )
+                )
+            return FilterExpr(col=f"stored_{leaf.col}", op=leaf.op, val=leaf.val)
+
+        assert pqfilt.map_leaves(node, rewrite) == NotExpr(
+            child=OrExpr(
+                children=(
+                    AndExpr(
+                        children=(
+                            FilterExpr(col="a_scaled", op=">", val=50),
+                            FilterExpr(col="a_valid", op="!=", val=0),
+                        )
+                    ),
+                    FilterExpr(col="stored_b", op="<", val=1),
+                )
+            )
+        )
+
+    def test_map_leaves_rejects_invalid_callback_result(self):
+        with pytest.raises(TypeError, match="must return an ExprNode"):
+            pqfilt.map_leaves(FilterExpr(col="a", op=">", val=5), lambda _: "invalid")
 
 
 class TestNullOperators:

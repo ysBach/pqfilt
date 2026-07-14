@@ -23,7 +23,7 @@ from ._parser import (
     to_pyarrow_expr,
 )
 
-__all__ = ["read", "filter_df"]
+__all__ = ["read", "filter_df", "to_ast"]
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,36 @@ def _tuples_to_ast(filters: list) -> ExprNode:
         if len(children) == 1:
             return children[0]
         return AndExpr(children=tuple(children))
+
+
+def to_ast(filters: str | list | ExprNode) -> ExprNode:
+    """Convert a supported filter specification to an AST.
+
+    Parameters
+    ----------
+    filters : str, list, or ExprNode
+        Expression string, flat list of filter tuples, DNF list of filter
+        tuples, or a pre-parsed AST node.
+
+    Returns
+    -------
+    ExprNode
+        Parsed or supplied AST node.
+
+    Raises
+    ------
+    TypeError
+        If *filters* is not a supported filter specification.
+    ValueError
+        If the supplied string or tuple filters are invalid.
+    """
+    if isinstance(filters, str):
+        return parse_expression(filters)
+    if isinstance(filters, list):
+        return _tuples_to_ast(filters)
+    if isinstance(filters, (FilterExpr, AndExpr, OrExpr, NotExpr)):
+        return filters
+    raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
 
 
 def _resolve_files(source: str | Path | list[str | Path]) -> list[str]:
@@ -204,15 +234,7 @@ def read(
     pa_filter: Any | None = None
 
     if filters is not None:
-        if isinstance(filters, str):
-            ast = parse_expression(filters)
-        elif isinstance(filters, list):
-            ast = _tuples_to_ast(filters)
-        elif isinstance(filters, (FilterExpr, AndExpr, OrExpr, NotExpr)):
-            ast = filters
-        else:
-            raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
-        pa_filter = to_pyarrow_expr(ast)
+        pa_filter = to_pyarrow_expr(to_ast(filters))
 
     # -- read --
     # pyarrow.dataset handles multi-file scans natively (parallel I/O via its
@@ -289,15 +311,7 @@ def filter_df(
         pqfilt.filter_df(df, "~(a in 1,2,3)")
         pqfilt.filter_df(df, [("a", ">", 5), ("b", "<", 90)])
     """
-    if isinstance(filters, str):
-        ast = parse_expression(filters)
-    elif isinstance(filters, list):
-        ast = _tuples_to_ast(filters)
-    elif isinstance(filters, (FilterExpr, AndExpr, OrExpr, NotExpr)):
-        ast = filters
-    else:
-        raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
-    mask = _eval_node(df, ast)
+    mask = _eval_node(df, to_ast(filters))
     return df[mask.fillna(False)].reset_index(drop=True)
 
 
