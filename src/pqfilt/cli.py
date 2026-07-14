@@ -6,7 +6,7 @@ import sys
 
 import click
 
-from .core import read
+from .core import _write_table, read_table
 
 
 @click.command()
@@ -80,14 +80,13 @@ def main(
         filelist = list(files)
 
     try:
-        result = read(
+        table = read_table(
             source=filelist,
             filters=combined_filter,
             columns=columns_list,
-            output=output,
-            overwrite=overwrite,
         )
-        click.echo(f"Filtered {len(result)} rows -> {output}", err=True)
+        _write_table(table, output, overwrite)
+        click.echo(f"Filtered {table.num_rows} rows -> {output}", err=True)
 
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)

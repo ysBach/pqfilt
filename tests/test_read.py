@@ -81,6 +81,15 @@ class TestReadColumns:
         assert all(df["a"] > 5)
 
 
+class TestReadTable:
+    def test_returns_filtered_arrow_table(self, sample_parquet):
+        table = pqfilt.read_table(sample_parquet, filters="a > 5", columns=["a", "name"])
+
+        assert table.num_rows == 5
+        assert table.column_names == ["a", "name"]
+        assert table["a"].to_pylist() == [6, 7, 8, 9, 10]
+
+
 class TestReadMultiFile:
     def test_multi_file(self, multi_parquet):
         df = pqfilt.read(multi_parquet, filters="a > 3")

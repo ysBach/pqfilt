@@ -23,7 +23,7 @@ from ._parser import (
     to_pyarrow_expr,
 )
 
-__all__ = ["read", "filter_df", "to_ast"]
+__all__ = ["read", "read_table", "filter_df", "to_ast"]
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,80 @@ def _resolve_files(source: str | Path | list[str | Path]) -> list[str]:
     return files
 
 
+def read_table(
+    source: str | Path | list[str | Path],
+    *,
+    filters: str | list | ExprNode | None = None,
+    columns: list[str] | None = None,
+) -> pa.Table:
+    """Read Parquet file(s) into an Arrow table with predicate pushdown.
+
+    Uses the same filter specifications and projection behavior as :func:`read`
+    without converting the materialized result to a pandas DataFrame.
+
+    Parameters
+    ----------
+    source : str, Path, or list
+        File path, glob pattern, or explicit list of paths.
+    filters : str, list, ExprNode, or None, optional
+        Filter specification accepted by :func:`to_ast`.
+    columns : list of str, optional
+        Columns to load (projection pushdown). ``None`` loads all columns.
+
+    Returns
+    -------
+    pyarrow.Table
+        Materialized filtered and optionally column-selected Arrow table.
+    """
+    pa_filter: Any | None = None
+    if filters is not None:
+        pa_filter = to_pyarrow_expr(to_ast(filters))
+
+    dataset = ds.dataset(_resolve_files(source), format="parquet")
+    return dataset.to_table(columns=columns, filter=pa_filter)
+
+
+def _write_table(
+    table: pa.Table,
+    output: str | Path,
+    overwrite: bool,
+    *,
+    dataframe: pd.DataFrame | None = None,
+) -> Path:
+    """Write an Arrow table while avoiding an unnecessary pandas conversion.
+
+    Parameters
+    ----------
+    table : pyarrow.Table
+        Table to write.
+    output : str or Path
+        Destination path. A ``.csv`` suffix selects CSV output; all other
+        suffixes select Parquet output.
+    overwrite : bool
+        Whether an existing output file may be replaced.
+    dataframe : pandas.DataFrame, optional
+        Already-converted representation to use for CSV output.
+
+    Returns
+    -------
+    pathlib.Path
+        Written destination path.
+
+    Raises
+    ------
+    FileExistsError
+        If *output* exists and *overwrite* is ``False``.
+    """
+    out = Path(output)
+    if out.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
+    if out.suffix.lower() == ".csv":
+        (dataframe if dataframe is not None else table.to_pandas()).to_csv(out, index=False)
+    else:
+        pq.write_table(table, out)
+    return out
+
+
 def read(
     source: str | Path | list[str | Path],
     *,
@@ -228,33 +302,12 @@ def read(
 
         df = pqfilt.read("data.parquet", filters=[("a", ">", 5), ("b", "<", 10)])
     """
-    files = _resolve_files(source)
-
-    # -- normalise filters to a pyarrow Expression (or None) --
-    pa_filter: Any | None = None
-
-    if filters is not None:
-        pa_filter = to_pyarrow_expr(to_ast(filters))
-
-    # -- read --
-    # pyarrow.dataset handles multi-file scans natively (parallel I/O via its
-    # C++ thread pool), so we build one dataset over all files instead of
-    # looping per-file at the Python level.
-    dataset = ds.dataset(files, format="parquet")
-    out_table: pa.Table = dataset.to_table(columns=columns, filter=pa_filter)
+    out_table = read_table(source, filters=filters, columns=columns)
     result = out_table.to_pandas()
 
     # -- save --
     if output is not None:
-        out = Path(output)
-        if out.exists() and not overwrite:
-            raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
-        if out.suffix.lower() == ".csv":
-            result.to_csv(out, index=False)
-        else:
-            # Direct Arrow -> parquet preserves type fidelity (timestamp tz,
-            # decimal, large_string, etc.) that a pandas round-trip would drop.
-            pq.write_table(out_table, out)
+        out = _write_table(out_table, output, overwrite, dataframe=result)
         log.info("Saved %d rows to %s", len(result), out)
 
     return result

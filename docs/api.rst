@@ -8,6 +8,8 @@ Core
 
 .. autofunction:: pqfilt.read
 
+.. autofunction:: pqfilt.read_table
+
 .. autofunction:: pqfilt.filter_df
 
 .. autofunction:: pqfilt.to_ast

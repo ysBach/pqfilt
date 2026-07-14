@@ -97,6 +97,15 @@ The main entry point is :func:`pqfilt.read`::
     # Equality
     df = pqfilt.read("data.parquet", filters="flag == 1")
 
+Arrow Tables
+~~~~~~~~~~~~
+
+Use :func:`pqfilt.read_table` when an Arrow table is the desired output. It
+uses the same filtering and projection behavior as :func:`pqfilt.read` but
+does not convert the materialized result to pandas::
+
+    table = pqfilt.read_table("data.parquet", filters="vmag < 20")
+
 Expression Syntax
 ~~~~~~~~~~~~~~~~~
 
