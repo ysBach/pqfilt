@@ -112,6 +112,14 @@ Expressions support ``&`` (AND), ``|`` (OR), and parentheses for grouping.
     # Mixed with parentheses
     df = pqfilt.read("data.parquet", filters="(a < 3 & b > 50) | c == 1")
 
+Word operators (``in``, ``not in``, ``is null``, and ``is not null``) require
+whitespace before the operator. This prevents an unquoted column name ending
+in ``in`` from being interpreted as an operator. Symbolic operators do not
+have this requirement::
+
+    df = pqfilt.read("data.parquet", filters="spin > 3")
+    df = pqfilt.read("data.parquet", filters="margin in 1,2")
+
 Negation
 ~~~~~~~~
 

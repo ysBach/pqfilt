@@ -99,6 +99,19 @@ class TestSpecialColumnNames:
         result = parse_expression("obs-rate != 0")
         assert result == FilterExpr(col="obs-rate", op="!=", val=0)
 
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            ("spin > 3", FilterExpr(col="spin", op=">", val=3)),
+            ("vmin < 5", FilterExpr(col="vmin", op="<", val=5)),
+            ("margin in 1,2", FilterExpr(col="margin", op="in", val=[1, 2])),
+            ("bin not in 1,2", FilterExpr(col="bin", op="not in", val=[1, 2])),
+            ("`spin` in 1,3", FilterExpr(col="spin", op="in", val=[1, 3])),
+        ],
+    )
+    def test_column_ending_in(self, expression, expected):
+        assert parse_expression(expression) == expected
+
 
 class TestErrors:
     def test_empty_expression(self):

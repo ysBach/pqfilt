@@ -42,7 +42,10 @@ __all__ = [
 
 # Operators ordered longest-first so '>=' is matched before '>', and
 # 'is not null' before 'is null'.
-_OPERATOR_PATTERN = re.compile(r"(>=|<=|!=|==|is\s+not\s+null\b|is\s+null\b|not\s+in\b|in\b|>|<)")
+_OPERATOR_PATTERN = re.compile(
+    r"(>=|<=|!=|==|(?<!\S)is\s+not\s+null\b|(?<!\S)is\s+null\b|"
+    r"(?<!\S)not\s+in\b|(?<!\S)in\b|>|<)"
+)
 
 # Backtick-quoted column name.
 _BACKTICK_RE = re.compile(r"^`([^`]+)`")
