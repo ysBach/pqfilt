@@ -46,6 +46,10 @@ class TestToNumericIfPossible:
     def test_negative_float(self):
         assert to_numeric_if_possible("-2.5") == -2.5
 
+    def test_large_int_preserves_precision(self):
+        value = "9007199254740993"
+        assert to_numeric_if_possible(value) == 9007199254740993
+
     def test_true_canonical(self):
         result = to_numeric_if_possible("True")
         assert result is True

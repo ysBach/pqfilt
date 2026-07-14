@@ -216,6 +216,22 @@ class TestReadBoolFilter:
         assert df["name"].iloc[0] == "C"
 
 
+class TestReadLargeIntegers:
+    def test_uint64_scalar_and_membership_filters_preserve_precision(self, tmp_path):
+        path = tmp_path / "uint64.parquet"
+        large_id = 9007199254740993
+        pd.DataFrame({"id": pd.Series([large_id, large_id + 1], dtype="uint64")}).to_parquet(
+            path,
+            index=False,
+        )
+
+        scalar = pqfilt.read(path, filters=f"id == {large_id}")
+        membership = pqfilt.read(path, filters=f"id in {large_id}")
+
+        assert scalar["id"].tolist() == [large_id]
+        assert membership["id"].tolist() == [large_id]
+
+
 class TestReadNegation:
     def test_not_simple(self, sample_parquet):
         df = pqfilt.read(sample_parquet, filters="~(a > 5)")

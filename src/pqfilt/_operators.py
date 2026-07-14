@@ -47,7 +47,8 @@ def to_numeric_if_possible(value_str: str) -> int | float | bool | str:
     values rather than strings.  This is required to avoid type mismatches
     when filtering boolean columns via pyarrow predicate pushdown.
 
-    Prefers ``int`` when the float value is integer-like.
+    Prefers direct integer parsing. Floats with an integer value are also
+    returned as ``int`` for compatibility with existing filter syntax.
 
     Examples
     --------
@@ -69,9 +70,15 @@ def to_numeric_if_possible(value_str: str) -> int | float | bool | str:
     if value_str.lower() == "false":
         return False
     try:
+        return int(value_str)
+    except ValueError:
+        pass
+
+    try:
         numeric_val = float(value_str)
-        if numeric_val.is_integer():
-            return int(numeric_val)
-        return numeric_val
     except ValueError:
         return value_str
+
+    if numeric_val.is_integer():
+        return int(numeric_val)
+    return numeric_val
