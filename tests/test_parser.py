@@ -153,6 +153,11 @@ class TestErrors:
         with pytest.raises(ValueError, match="Unterminated parenthesized membership"):
             parse_expression("a in (1,2")
 
+    @pytest.mark.parametrize("expression", ["a == 'foo", 'a == "foo', "`column > 1"])
+    def test_unterminated_quote(self, expression):
+        with pytest.raises(ValueError, match="Unterminated quoted span"):
+            parse_expression(expression)
+
 
 class TestToPyarrowExpr:
     def test_simple_filter(self):

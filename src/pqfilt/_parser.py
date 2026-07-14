@@ -246,6 +246,8 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
             buf.append(ch)
             i += 1
 
+    if quote is not None:
+        raise ValueError(f"Unterminated quoted span starting with {quote!r}")
     if membership_list_depth:
         raise ValueError("Unterminated parenthesized membership value list")
     flush_buf()
