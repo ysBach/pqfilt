@@ -97,14 +97,32 @@ The main entry point is :func:`pqfilt.read`::
     # Equality
     df = pqfilt.read("data.parquet", filters="flag == 1")
 
-Arrow Tables
-~~~~~~~~~~~~
+Arrow Scanners
+~~~~~~~~~~~~~~
 
-Use :func:`pqfilt.read_table` when an Arrow table is the desired output. It
-uses the same filtering and projection behavior as :func:`pqfilt.read` but
-does not convert the materialized result to pandas::
+Use :func:`pqfilt.scan` when an Arrow scanner is the desired output. It uses
+the same filtering and projection behavior as :func:`pqfilt.read`, and the
+caller chooses whether to materialize a table or process record batches::
 
-    table = pqfilt.read_table("data.parquet", filters="vmag < 20")
+    scanner = pqfilt.scan("data.parquet", filters="vmag < 20")
+    table = scanner.to_table()
+
+    # Or process batches without materializing a table.
+    for batch in pqfilt.scan("data.parquet", filters="vmag < 20").to_batches():
+        process(batch)
+
+Streaming Writes
+~~~~~~~~~~~~~~~~
+
+Use :func:`pqfilt.write_filtered` when the filtered result only needs to be
+saved. It scans and writes record batches without materializing the complete
+result in memory, and returns the number of rows written::
+
+    rows_written = pqfilt.write_filtered(
+        "data/*.parquet",
+        "filtered.parquet",
+        filters="vmag < 20",
+    )
 
 Expression Syntax
 ~~~~~~~~~~~~~~~~~

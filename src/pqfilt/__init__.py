@@ -10,7 +10,7 @@ Usage::
 
 from __future__ import annotations
 
-from .core import filter_df, read, read_table, to_ast
+from .core import filter_df, read, scan, to_ast, write_filtered
 from ._parser import (
     AndExpr,
     FilterExpr,
@@ -23,7 +23,8 @@ from ._parser import (
 
 __all__ = [
     "read",
-    "read_table",
+    "scan",
+    "write_filtered",
     "filter_df",
     "to_ast",
     "parse_expression",

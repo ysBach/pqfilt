@@ -8,7 +8,9 @@ Core
 
 .. autofunction:: pqfilt.read
 
-.. autofunction:: pqfilt.read_table
+.. autofunction:: pqfilt.scan
+
+.. autofunction:: pqfilt.write_filtered
 
 .. autofunction:: pqfilt.filter_df
 

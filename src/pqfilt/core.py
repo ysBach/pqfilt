@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.csv as pacsv
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
@@ -23,7 +24,7 @@ from ._parser import (
     to_pyarrow_expr,
 )
 
-__all__ = ["read", "read_table", "filter_df", "to_ast"]
+__all__ = ["read", "scan", "write_filtered", "filter_df", "to_ast"]
 
 log = logging.getLogger(__name__)
 
@@ -143,37 +144,97 @@ def _resolve_files(source: str | Path | list[str | Path]) -> list[str]:
     return files
 
 
-def read_table(
+def scan(
     source: str | Path | list[str | Path],
     *,
     filters: str | list | ExprNode | None = None,
     columns: list[str] | None = None,
-) -> pa.Table:
-    """Read Parquet file(s) into an Arrow table with predicate pushdown.
-
-    Uses the same filter specifications and projection behavior as :func:`read`
-    without converting the materialized result to a pandas DataFrame.
+) -> ds.Scanner:
+    """Create an Arrow scanner with the pqfilt filter and projection policy.
 
     Parameters
     ----------
     source : str, Path, or list
         File path, glob pattern, or explicit list of paths.
-    filters : str, list, ExprNode, or None, optional
+    filters : str, list, ExprNode, or None
         Filter specification accepted by :func:`to_ast`.
     columns : list of str, optional
-        Columns to load (projection pushdown). ``None`` loads all columns.
+        Columns to project from the input dataset.
 
     Returns
     -------
-    pyarrow.Table
-        Materialized filtered and optionally column-selected Arrow table.
+    pyarrow.dataset.Scanner
+        Lazily evaluated scanner configured with the requested filter and
+        projection.
     """
     pa_filter: Any | None = None
     if filters is not None:
         pa_filter = to_pyarrow_expr(to_ast(filters))
+    return ds.dataset(_resolve_files(source), format="parquet").scanner(
+        columns=columns,
+        filter=pa_filter,
+    )
 
-    dataset = ds.dataset(_resolve_files(source), format="parquet")
-    return dataset.to_table(columns=columns, filter=pa_filter)
+
+def write_filtered(
+    source: str | Path | list[str | Path],
+    output: str | Path,
+    *,
+    filters: str | list | ExprNode | None = None,
+    columns: list[str] | None = None,
+    overwrite: bool = False,
+) -> int:
+    """Filter Parquet file(s) and write the result batch by batch.
+
+    Unlike :func:`read`, this function does not materialize the complete
+    filtered result in memory. It writes Parquet by default and writes CSV
+    when *output* has a ``.csv`` suffix.
+
+    Parameters
+    ----------
+    source : str, Path, or list
+        File path, glob pattern, or explicit list of paths.
+    output : str or Path
+        Destination path for the filtered result.
+    filters : str, list, ExprNode, or None, optional
+        Filter specification accepted by :func:`to_ast`.
+    columns : list of str, optional
+        Columns to write. ``None`` writes all columns.
+    overwrite : bool, optional
+        Whether an existing output file may be replaced.
+
+    Returns
+    -------
+    int
+        Number of rows written.
+
+    Raises
+    ------
+    FileExistsError
+        If *output* exists and *overwrite* is ``False``.
+    ValueError
+        If *output* is one of the input files.
+    """
+    files = _resolve_files(source)
+    out = Path(output)
+    if out.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
+    if out.resolve() in {Path(file).resolve() for file in files}:
+        raise ValueError("Output path must not be an input file for streaming writes.")
+
+    scanner = scan(files, filters=filters, columns=columns)
+    rows_written = 0
+    writer: pq.ParquetWriter | pacsv.CSVWriter
+    if out.suffix.lower() == ".csv":
+        writer = pacsv.CSVWriter(str(out), scanner.projected_schema)
+    else:
+        writer = pq.ParquetWriter(out, scanner.projected_schema)
+
+    with writer:
+        for batch in scanner.to_batches():
+            writer.write_batch(batch)
+            rows_written += batch.num_rows
+    return rows_written
 
 
 def _write_table(
@@ -302,7 +363,7 @@ def read(
 
         df = pqfilt.read("data.parquet", filters=[("a", ">", 5), ("b", "<", 10)])
     """
-    out_table = read_table(source, filters=filters, columns=columns)
+    out_table = scan(source, filters=filters, columns=columns).to_table()
     result = out_table.to_pandas()
 
     # -- save --

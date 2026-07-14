@@ -81,13 +81,47 @@ class TestReadColumns:
         assert all(df["a"] > 5)
 
 
-class TestReadTable:
-    def test_returns_filtered_arrow_table(self, sample_parquet):
-        table = pqfilt.read_table(sample_parquet, filters="a > 5", columns=["a", "name"])
+class TestScan:
+    def test_uses_read_defaults(self, sample_parquet):
+        assert pqfilt.scan(sample_parquet).to_table().num_rows == 10
+
+    def test_returns_filtered_arrow_scanner(self, sample_parquet):
+        scanner = pqfilt.scan(sample_parquet, filters="a > 5", columns=["a", "name"])
+        table = scanner.to_table()
 
         assert table.num_rows == 5
         assert table.column_names == ["a", "name"]
         assert table["a"].to_pylist() == [6, 7, 8, 9, 10]
+
+
+class TestWriteFiltered:
+    def test_streams_filtered_parquet(self, sample_parquet, tmp_path):
+        output = tmp_path / "filtered.parquet"
+
+        rows_written = pqfilt.write_filtered(sample_parquet, output, filters="a > 5")
+
+        assert rows_written == 5
+        assert pd.read_parquet(output)["a"].tolist() == [6, 7, 8, 9, 10]
+
+    def test_streams_filtered_csv(self, sample_parquet, tmp_path):
+        output = tmp_path / "filtered.csv"
+
+        rows_written = pqfilt.write_filtered(sample_parquet, output, filters="a > 5")
+
+        assert rows_written == 5
+        assert pd.read_csv(output)["a"].tolist() == [6, 7, 8, 9, 10]
+
+    def test_writes_empty_parquet(self, sample_parquet, tmp_path):
+        output = tmp_path / "empty.parquet"
+
+        rows_written = pqfilt.write_filtered(sample_parquet, output, filters="a > 100")
+
+        assert rows_written == 0
+        assert pd.read_parquet(output).empty
+
+    def test_rejects_input_as_output(self, sample_parquet):
+        with pytest.raises(ValueError, match="must not be an input file"):
+            pqfilt.write_filtered(sample_parquet, sample_parquet, overwrite=True)
 
 
 class TestReadMultiFile:
