@@ -33,5 +33,6 @@ CLI::
    :caption: Contents
 
    usage
+   advanced
    api
    changelog

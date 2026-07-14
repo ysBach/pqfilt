@@ -30,7 +30,7 @@ Expression Parser
 
 .. autofunction:: pqfilt.map_leaves
 
-.. autofunction:: pqfilt._parser.to_pyarrow_expr
+.. autofunction:: pqfilt.to_pyarrow_expr
 
 AST Nodes
 ~~~~~~~~~

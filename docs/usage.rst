@@ -23,11 +23,17 @@ When a file has multiple row groups and the filter is on a sorted or
 clustered column, pyarrow can skip entire row groups without reading
 them — giving much larger speedups.
 
+Timings depend on hardware, filesystem cache, Parquet layout, and filter
+selectivity. The results below document the exact supplied datasets and
+benchmark methods; use them as comparative examples rather than universal
+performance guarantees.
+
 Benchmark 1 — SPHEREx source catalog (single row group)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Real 3.6M-row SPHEREx catalog (``srccat_2026W07``, 1 row group, 315 MB,
-32 columns, warm OS page cache)::
+``srccat/srccat_2026W07_1A_0001DP1_spx_srccat_v17.parq`` (3,619,247 rows,
+1 row group, 315 MB, 32 columns). The table below is the median of seven
+timed runs after one warm-up run:
 
     filter = "ra is not null & dec > -55 & (WISE_W1 > 0 | mag_det1 < 19.5)"
 
@@ -39,14 +45,14 @@ Real 3.6M-row SPHEREx catalog (``srccat_2026W07``, 1 row group, 315 MB,
     df = pd.read_parquet(path)
     df = df[df["ra"].notna() & (df["dec"] > -55) & ((df["WISE_W1"] > 0) | (df["mag_det1"] < 19.5))]
 
-Results (median of 7 runs, 529,760 / 3,619,247 rows = 14.6% kept)::
+Results (529,760 / 3,619,247 rows = 14.6% kept)::
 
                                       pandas   pqfilt  speedup
     all 32 columns
-      load + filter (total)          191.8 ms  107.3 ms   1.8×
+      load + filter (total)          188.3 ms   98.6 ms   1.91×
 
     4 columns (projection)
-      load + filter (total)           42.5 ms   18.7 ms   2.3×
+      load + filter (total)           41.3 ms   18.5 ms   2.23×
 
 With a single row group the gain comes from skipping pandas
 materialisation of discarded rows.  Adding ``columns=`` further reduces
@@ -55,19 +61,23 @@ I/O and conversion work.
 Benchmark 2 — multi-file glob (file skipping)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Real SPHEREx-SSO ephemeris database: 111 ``.parq`` files, 139M rows,
-22 columns, warm OS page cache.  Each file covers a distinct
-observation window; filtering by Julian Date lets pyarrow skip files
-whose ``jd_tdb`` range does not overlap the query::
+``SPHEREx-SSO/DB/DB_EPH/eph*.parq`` (110 files, 139,146,379 rows, 9.4 GB,
+197 row groups, 22 columns). Each file covers a distinct observation window;
+filtering by Julian Date lets pyarrow skip files whose ``jd_tdb`` range does
+not overlap the query::
 
-    filter = "jd_tdb > 2460820 & jd_tdb < 2460830"   # 10-day window → 4 of 111 files
+    filter = "jd_tdb > 2460820 & jd_tdb < 2460830"   # 10-day window → 4 of 110 files
 
-Results (3,926,822 / 139,146,431 rows = 2.8% kept)::
+Results (3,926,822 / 139,146,379 rows = 2.8% kept; 4 files and 7 row groups
+overlap the window). The table is the median of seven isolated runs sharing a
+warm filesystem cache. The pandas baseline reads every file fully, filters
+each DataFrame immediately, then concatenates matching rows to avoid an
+otherwise unstable whole-dataset DataFrame peak::
 
                               pandas                 pqfilt  speedup
-    read all + filter in RAM  15,403 ms (11.3 + 4.1 s)  64 ms   240×
+    read all + filter         2,957 ms                  56 ms   52.8×
 
-pyarrow reads each file's footer statistics and skips the 107 files
+pyarrow reads each file's footer statistics and skips the 106 files
 whose ``jd_tdb`` range lies entirely outside the query window, reading
 only the 4 matching files.
 
@@ -78,7 +88,7 @@ When to expect which speedup
   materialisation of filtered-out rows.
 * **~10–100×** — many row groups in one file with the filter column
   sorted or clustered.
-* **100×+** — multi-file dataset where the filter can exclude entire
+* **10×+** — multi-file dataset where the filter can exclude entire
   files based on their per-file min/max statistics.
 
 Python API
@@ -97,32 +107,42 @@ The main entry point is :func:`pqfilt.read`::
     # Equality
     df = pqfilt.read("data.parquet", filters="flag == 1")
 
-Arrow Scanners
-~~~~~~~~~~~~~~
+Available Operators
+~~~~~~~~~~~~~~~~~~~
 
-Use :func:`pqfilt.scan` when an Arrow scanner is the desired output. It uses
-the same filtering and projection behavior as :func:`pqfilt.read`, and the
-caller chooses whether to materialize a table or process record batches::
+The table describes pqfilt operators. For DataFrames,
+:func:`pqfilt.filter_df` follows Arrow's null behavior rather than relying on
+raw pandas comparison behavior.
 
-    scanner = pqfilt.scan("data.parquet", filters="vmag < 20")
-    table = scanner.to_table()
-
-    # Or process batches without materializing a table.
-    for batch in pqfilt.scan("data.parquet", filters="vmag < 20").to_batches():
-        process(batch)
-
-Streaming Writes
-~~~~~~~~~~~~~~~~
-
-Use :func:`pqfilt.write_filtered` when the filtered result only needs to be
-saved. It scans and writes record batches without materializing the complete
-result in memory, and returns the number of rows written::
-
-    rows_written = pqfilt.write_filtered(
-        "data/*.parquet",
-        "filtered.parquet",
-        filters="vmag < 20",
-    )
++-----------------+--------------------+------------------------------------------------------------------+
+| Operator        | Meaning            | Arrow/pandas note                                                |
++=================+====================+==================================================================+
+| ``>``           | Greater than       | Raw pandas represents missing comparisons differently;           |
+|                 |                    | ``filter_df`` preserves Arrow's unknown result. This matters in  |
+|                 |                    | compound or negated expressions.                                 |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``>=``          | Greater than or    | Same missing-value note as ``>``.                                |
+|                 | equal to           |                                                                  |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``<``           | Less than          | Same missing-value note as ``>``.                                |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``<=``          | Less than or equal | Same missing-value note as ``>``.                                |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``==``          | Equal to           | Same missing-value note as ``>``.                                |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``!=``          | Not equal to       | Raw pandas normally treats ``NaN != value`` as true; Arrow gives |
+|                 |                    | an unknown result. ``filter_df`` follows Arrow.                  |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``in``          | Member of a list   | A missing value matches only when the list contains a missing    |
+|                 |                    | value. ``filter_df`` follows Arrow.                              |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``not in``      | Not a member of a  | Arrow keeps a missing value when the list has no missing value,  |
+|                 | list               | and drops it when the list does. ``filter_df`` follows Arrow.    |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``is null``     | Missing value      | No special Arrow/pandas difference.                              |
++-----------------+--------------------+------------------------------------------------------------------+
+| ``is not null`` | Non-missing value  | No special Arrow/pandas difference.                              |
++-----------------+--------------------+------------------------------------------------------------------+
 
 Expression Syntax
 ~~~~~~~~~~~~~~~~~
@@ -206,6 +226,9 @@ prevent `pqfilt` from coercing them to numbers. This avoids PyArrow type errors:
 
     # '1' is preserved as a string
     df = pqfilt.read("data.parquet", filters="desig in ['1', '356']")
+
+Unterminated quotes and parenthesized membership lists are invalid filter
+syntax and raise :class:`ValueError`.
 
 Tuple Syntax
 ~~~~~~~~~~~~

@@ -10,9 +10,13 @@ Generic Parquet filtering tool (CLI and Python API).
 `pqfilt` wraps `pyarrow.dataset` to let you filter Parquet files **before** they
 are fully read into memory, using row-group-level filtering. This is very efficient/fast.
 
-* Using `pqfilt.read()` with filters will be orders of magnitude faster than `pd.read_parquet()` for large datasets.
-  * **240× faster** on the SPHEREx's SSO ephemeris database (111 files, 139M rows; a 10-day `jd_tdb` window skips 107 of 111 files entirely, 64 ms vs 15 s);
-  * **1.8–2.3× faster** on a 3.6M-row SPHEREx source catalog (single row group, compound filter, all/4 columns); gains are larger when the file has many files/row groups or sits on disk.
+* Using `pqfilt.read()` with filters is faster than `pd.read_parquet()` on the
+  measured SPHEREx datasets.
+  * **~50× faster** on the SPHEREx SSO ephemeris database (110 files, 139M
+    rows; a 10-day `jd_tdb` window selects 4 files, 56 ms vs 2.957 s);
+  * **~2× faster** on a 3.6M-row SPHEREx source catalog (single row
+    group, compound filter, all/four columns). Gains are larger when files have
+    many row groups or the filter excludes whole files.
 * The syntax is designed to be intuitive and flexible
    * e.g., "a > 5 & ~(b in 1,2) & v is not null" is much simpler than the equivalent `pyarrow` expression syntax or chaining multiple DataFrame filters together.
 * Even if you already loaded a DataFrame, you can use `pqfilt.filter_df(df, 'a > 5 & ~(b in 1,2) & v is not null')` to apply the same filter syntax to it.
@@ -69,6 +73,17 @@ df = pqfilt.read("data.parquet", filters=[
 # Column selection + output
 df = pqfilt.read("data/*.parquet", columns=["a", "b"], output="out.parquet")
 
+# Arrow scanner: materialize a table or consume record batches yourself
+scanner = pqfilt.scan("data/*.parquet", filters="vmag < 20")
+table = scanner.to_table()
+
+# Out-of-core write: stream filtered batches directly to an output file
+rows_written = pqfilt.write_filtered(
+    "data/*.parquet",
+    "filtered.parquet",
+    filters="vmag < 20",
+)
+
 # Filter an already-loaded DataFrame (same syntax)
 df = pd.read_csv("data.csv")
 filtered = pqfilt.filter_df(df, "a > 5 & ~(b in 1,2) & v is not null")
@@ -95,10 +110,20 @@ pqfilt data/*.parquet -f "desig in [1, 2, 3]" -o filtered.parquet
 
 ### Column names with special characters
 
-Columns containing operator characters can be backtick-quoted:
+Columns containing operator characters can be backtick-quoted. Say you have a column named ``"alpha*360"``. Wrap it with backticks to avoid misinterpretation as a multiplication operator:
 
 ```python
 pqfilt.read("data.parquet", filters="`alpha*360` > 100")
+```
+
+Word operators (``in``, ``not in``, ``is null``, and ``is not null``) must
+be preceded by whitespace. This grammar rule keeps an unquoted column name
+ending in ``in`` (such as ``spin`` or ``margin``) from being misread as an
+operator. Symbolic operators do not have this requirement:
+
+```python
+pqfilt.read("data.parquet", filters="spin > 3")
+pqfilt.read("data.parquet", filters="margin in 1,2")
 ```
 
 ## License

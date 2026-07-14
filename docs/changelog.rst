@@ -1,6 +1,24 @@
 Changelog
 =========
 
+v0.3.0 (2026-07-14)
+--------------------
+
+* Critical bug fix:
+  * Column names ending in ``in`` were misinterpreted as the ``in`` operator. Fixed.
+  * Fixed parsing of parenthesized membership lists
+  * Fixed handling of unterminated quotes.
+* Made :func:`pqfilt.filter_df` match Arrow null behavior
+* :func:`pqfilt.filter_df`: DNF tuple validation consistent and explicit.
+* Added :func:`pqfilt.scan`: Arrow-native, lazily evaluated scans
+* Added :func:`pqfilt.write_filtered`: One-shot writer (csv or parquet) t
+  * The CLI now uses this streaming write path.
+* Added public AST utilities (:func:`pqfilt.to_ast`, :func:`pqfilt.map_leaves`)
+  and operator utilities (:data:`pqfilt.SUPPORTED_OPERATORS`,
+  :func:`pqfilt.validate_operator`).
+* Preserved exact integer filter literals beyond the binary64 precision limit.
+* Split documentation into a practical usage guide and an advanced API guide.
+
 v0.2.2 (2026-06-19)
 --------------------
 
