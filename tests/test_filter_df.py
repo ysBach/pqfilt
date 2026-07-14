@@ -99,6 +99,33 @@ class TestFilterDfNull:
         assert len(out) == 3
 
 
+class TestFilterDfArrowNullSemantics:
+    @pytest.fixture
+    def nullable_df(self):
+        return pd.DataFrame({"id": [1, 2, 3], "a": [1.0, 2.0, None]})
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            "a != 2",
+            "~(a == 2)",
+            "a > 1 | a == 1",
+            "a in 1,2",
+            "a not in 1,2",
+            [("a", "in", [None])],
+            [("a", "not in", [None])],
+        ],
+    )
+    def test_matches_read(self, nullable_df, tmp_path, filters):
+        path = tmp_path / "nullable.parquet"
+        nullable_df.to_parquet(path, index=False)
+
+        from_dataframe = pqfilt.filter_df(nullable_df, filters)
+        from_parquet = pqfilt.read(path, filters=filters)
+
+        assert from_dataframe["id"].tolist() == from_parquet["id"].tolist()
+
+
 class TestFilterDfBool:
     def test_true(self, df):
         out = pqfilt.filter_df(df, "flag == True")

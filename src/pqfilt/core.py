@@ -259,6 +259,13 @@ def filter_df(
     pandas.DataFrame
         Filtered rows with reset index.
 
+    Notes
+    -----
+    Comparisons on missing values use PyArrow's three-valued semantics:
+    an unknown comparison result is excluded from the returned rows. Membership
+    filters follow PyArrow's ``isin`` behavior, where a missing value matches
+    a membership list containing a missing value.
+
     Raises
     ------
     KeyError
@@ -291,11 +298,11 @@ def filter_df(
     else:
         raise TypeError(f"filters must be str, list, or ExprNode, got {type(filters).__name__}")
     mask = _eval_node(df, ast)
-    return df[mask].reset_index(drop=True)
+    return df[mask.fillna(False)].reset_index(drop=True)
 
 
 def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
-    """Recursively evaluate an AST node to a boolean mask over *df*."""
+    """Recursively evaluate an AST node to a nullable boolean mask over *df*."""
     if isinstance(node, FilterExpr):
         if node.col not in df.columns:
             raise KeyError(
@@ -304,25 +311,25 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
         col = df[node.col]
         op, val = node.op, node.val
         if op == ">":
-            return col > val
+            return _comparison_mask(col, col > val)
         elif op == ">=":
-            return col >= val
+            return _comparison_mask(col, col >= val)
         elif op == "<":
-            return col < val
+            return _comparison_mask(col, col < val)
         elif op == "<=":
-            return col <= val
+            return _comparison_mask(col, col <= val)
         elif op == "==":
-            return col == val
+            return _comparison_mask(col, col == val)
         elif op == "!=":
-            return col != val
+            return _comparison_mask(col, col != val)
         elif op == "in":
-            return col.isin(val)
+            return _membership_mask(col, val)
         elif op == "not in":
-            return ~col.isin(val)
+            return ~_membership_mask(col, val)
         elif op == "is null":
-            return col.isna()
+            return col.isna().astype("boolean")
         elif op == "is not null":
-            return col.notna()
+            return col.notna().astype("boolean")
         else:
             raise ValueError(f"Unsupported operator: {op!r}")
     elif isinstance(node, AndExpr):
@@ -339,3 +346,43 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
         return ~_eval_node(df, node.child)
     else:
         raise TypeError(f"Unknown node type: {type(node)}")
+
+
+def _comparison_mask(column: pd.Series, mask: pd.Series) -> pd.Series:
+    """Represent comparisons with missing inputs as unknown.
+
+    Parameters
+    ----------
+    column : pandas.Series
+        Compared column.
+    mask : pandas.Series
+        Boolean comparison result.
+
+    Returns
+    -------
+    pandas.Series
+        Nullable boolean mask, with missing column values represented by
+        ``pd.NA``.
+    """
+    return mask.astype("boolean").mask(column.isna(), pd.NA)
+
+
+def _membership_mask(column: pd.Series, values: Any) -> pd.Series:
+    """Evaluate membership with PyArrow's missing-value behavior.
+
+    Parameters
+    ----------
+    column : pandas.Series
+        Column to test.
+    values : Any
+        Membership values accepted by :meth:`pandas.Series.isin`.
+
+    Returns
+    -------
+    pandas.Series
+        Nullable boolean mask. Missing column values match when *values*
+        contains a missing value.
+    """
+    mask = column.isin(values).astype("boolean")
+    contains_missing = any(pd.isna(value) for value in values)
+    return mask.mask(column.isna(), contains_missing)
