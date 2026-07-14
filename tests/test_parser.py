@@ -47,6 +47,23 @@ class TestInNotIn:
         result = parse_expression("name not in foo,bar")
         assert result == FilterExpr(col="name", op="not in", val=["foo", "bar"])
 
+    def test_in_parenthesized_list(self):
+        result = parse_expression("desig in (1, 2, 3)")
+        assert result == FilterExpr(col="desig", op="in", val=[1, 2, 3])
+
+    def test_not_in_parenthesized_string_list(self):
+        result = parse_expression("name not in ('foo', 'bar')")
+        assert result == FilterExpr(col="name", op="not in", val=["foo", "bar"])
+
+    def test_parenthesized_list_in_compound_expression(self):
+        result = parse_expression("a in (1,2) & b > 3")
+        assert result == AndExpr(
+            children=(
+                FilterExpr(col="a", op="in", val=[1, 2]),
+                FilterExpr(col="b", op=">", val=3),
+            )
+        )
+
 
 class TestAndOr:
     def test_and(self):
@@ -131,6 +148,10 @@ class TestErrors:
     def test_missing_value(self):
         with pytest.raises(ValueError, match="Missing value"):
             parse_expression("a >")
+
+    def test_unterminated_parenthesized_membership_list(self):
+        with pytest.raises(ValueError, match="Unterminated parenthesized membership"):
+            parse_expression("a in (1,2")
 
 
 class TestToPyarrowExpr:

@@ -47,6 +47,7 @@ _OPERATOR_PATTERN = re.compile(
     r"(>=|<=|!=|==|(?<!\S)is\s+not\s+null\b|(?<!\S)is\s+null\b|"
     r"(?<!\S)not\s+in\b|(?<!\S)in\b|>|<)"
 )
+_MEMBERSHIP_OPERATOR_AT_END = re.compile(r"(?<!\S)(?:not\s+in|in)\s*$")
 
 # Backtick-quoted column name.
 _BACKTICK_RE = re.compile(r"^`([^`]+)`")
@@ -183,6 +184,7 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
     n = len(expression)
     buf: list[str] = []
     quote: str | None = None  # active quote char: "'", '"', or '`'
+    membership_list_depth = 0
 
     def flush_buf() -> None:
         text = "".join(buf).strip()
@@ -206,9 +208,21 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
             buf.append(ch)
             i += 1
             continue
+        if membership_list_depth:
+            buf.append(ch)
+            if ch == "(":
+                membership_list_depth += 1
+            elif ch == ")":
+                membership_list_depth -= 1
+            i += 1
+            continue
         if ch == "(":
-            flush_buf()
-            tokens.append(("LPAREN", "("))
+            if _MEMBERSHIP_OPERATOR_AT_END.search("".join(buf)):
+                membership_list_depth = 1
+                buf.append(ch)
+            else:
+                flush_buf()
+                tokens.append(("LPAREN", "("))
             i += 1
         elif ch == ")":
             flush_buf()
@@ -232,6 +246,8 @@ def _tokenise(expression: str) -> list[tuple[str, str]]:
             buf.append(ch)
             i += 1
 
+    if membership_list_depth:
+        raise ValueError("Unterminated parenthesized membership value list")
     flush_buf()
     return tokens
 
