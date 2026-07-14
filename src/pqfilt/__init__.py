@@ -11,6 +11,7 @@ Usage::
 from __future__ import annotations
 
 from .core import filter_df, read, scan, to_ast, write_filtered
+from ._operators import SUPPORTED_OPERATORS, validate_operator
 from ._parser import (
     AndExpr,
     FilterExpr,
@@ -27,6 +28,8 @@ __all__ = [
     "write_filtered",
     "filter_df",
     "to_ast",
+    "SUPPORTED_OPERATORS",
+    "validate_operator",
     "parse_expression",
     "to_pyarrow_expr",
     "map_leaves",

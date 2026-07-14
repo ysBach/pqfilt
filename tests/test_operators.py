@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+import pqfilt
+
 from pqfilt._operators import (
     to_numeric_if_possible,
     validate_operator,
@@ -25,6 +27,21 @@ class TestValidateOperator:
     def test_invalid_with_col(self):
         with pytest.raises(ValueError, match="column 'x'"):
             validate_operator("~=", col="x")
+
+    def test_root_level_api(self):
+        assert pqfilt.SUPPORTED_OPERATORS == (
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "==",
+            "!=",
+            "in",
+            "not in",
+            "is null",
+            "is not null",
+        )
+        pqfilt.validate_operator("in")
 
 
 class TestToNumericIfPossible:

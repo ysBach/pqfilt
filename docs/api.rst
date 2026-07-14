@@ -16,6 +16,13 @@ Core
 
 .. autofunction:: pqfilt.to_ast
 
+Operators
+---------
+
+.. autodata:: pqfilt.SUPPORTED_OPERATORS
+
+.. autofunction:: pqfilt.validate_operator
+
 Expression Parser
 -----------------
 
