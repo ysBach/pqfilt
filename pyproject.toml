@@ -49,6 +49,21 @@ pqfilt = "pqfilt.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pqfilt"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/pqfilt",
+    "/tests",
+    "/docs/*.rst",
+    "/docs/conf.py",
+    "/docs/Makefile",
+    "/README.md",
+    "/RELEASING.md",
+    "/LICENSE",
+    "/pyproject.toml",
+    "/uv.lock",
+]
+exclude = ["**/__pycache__", "**/*.pyc", "**/.DS_Store"]
+
 [tool.ruff]
 line-length = 100
 

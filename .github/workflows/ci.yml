@@ -5,25 +5,31 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    uses: ./.github/workflows/artifacts.yml
+    with:
+      release: ${{ inputs.release || false }}
+
+  lint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --locked --extra dev --python 3.13
       - name: Lint
-        run: uv run ruff check .
-      - name: Test
-        run: uv run pytest -v
+        run: uv run --no-sync ruff check . .github/scripts .github/tests
 
   docs:
     runs-on: ubuntu-latest
@@ -34,6 +40,6 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
       - name: Install dependencies
-        run: uv sync --extra docs
+        run: uv sync --locked --extra docs --python 3.12
       - name: Build docs
-        run: uv run sphinx-build -W docs docs/_build/html
+        run: uv run --no-sync sphinx-build -W docs docs/_build/html

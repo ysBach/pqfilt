@@ -3,15 +3,33 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    with:
+      release: true
+
   publish:
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: validate
     runs-on: ubuntu-latest
-    environment: pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pqfilt/
     permissions:
       id-token: write  # required for trusted publishing
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv build
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
