@@ -515,6 +515,8 @@ def _eval_node(df: pd.DataFrame, node: ExprNode) -> pd.Series:
             )
         col = df[node.col]
         op, val = node.op, node.val
+        if val is None and op in (">", ">=", "<", "<=", "==", "!="):
+            return pd.Series(pd.NA, index=df.index, dtype="boolean")
         if op == ">":
             return _comparison_mask(col, col > val)
         elif op == ">=":

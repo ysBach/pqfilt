@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -124,6 +126,22 @@ class TestFilterDfArrowNullSemantics:
         from_parquet = pqfilt.read(path, filters=filters)
 
         assert from_dataframe["id"].tolist() == from_parquet["id"].tolist()
+
+    @pytest.mark.parametrize("dtype", ["float64", "Int64", "object"])
+    @pytest.mark.parametrize("op", ["==", "!=", ">", ">=", "<", "<="])
+    @pytest.mark.parametrize("negated", [False, True])
+    def test_null_comparison_value_is_unknown(
+        self, dtype: str, op: str, negated: bool, tmp_path: Path
+    ) -> None:
+        frame = pd.DataFrame({"a": pd.Series([1, 2, None], dtype=dtype)})
+        path = tmp_path / "null-comparison.parquet"
+        frame.to_parquet(path, index=False)
+        expression = pqfilt.FilterExpr("a", op, None)
+        if negated:
+            expression = pqfilt.NotExpr(expression)
+
+        assert pqfilt.filter_df(frame, expression).empty
+        assert pqfilt.read(path, filters=expression).empty
 
 
 class TestFilterDfBool:
