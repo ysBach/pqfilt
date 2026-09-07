@@ -1,6 +1,19 @@
 Changelog
 =========
 
+v0.3.1 (2026-09-07)
+--------------------
+
+* Save output atomically: failures preserve existing files;
+  ``overwrite=False`` also protects files created during the scan.
+* Reject hard links to input files as streaming output destinations.
+* Expand glob patterns in source lists and accept literal filenames containing
+  brackets. Read each file once, including repeated paths and file aliases.
+* Preserve Arrow's unknown result for DataFrame comparisons against ``None``,
+  including negated comparisons.
+* Validate release versions and installed distributions before publishing.
+  Select CI Python versions explicitly and exclude local planning files from sdists.
+
 v0.3.0 (2026-07-14)
 --------------------
 
