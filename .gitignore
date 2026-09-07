@@ -1,5 +1,12 @@
 .DS_Store
 **/*.DS_Store
+.claude/
+.cursor/
+.kiro/
+.handoff/
+.ruff_cache/
+.uv-cache/
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from glob import glob
 from pathlib import Path
+from stat import S_IMODE
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pandas as pd
@@ -167,6 +172,44 @@ def _resolve_files(source: str | Path | list[str | Path]) -> list[str]:
     return files
 
 
+@contextmanager
+def _atomic_output(output: str | Path, overwrite: bool) -> Iterator[Path]:
+    """Stage an output beside its destination and publish only on success.
+
+    Parameters
+    ----------
+    output : str or pathlib.Path
+        Destination path. Overwrites follow an existing symbolic link.
+    overwrite : bool
+        Whether an existing destination may be replaced.
+
+    Yields
+    ------
+    pathlib.Path
+        Temporary file path for the caller to write and close.
+
+    Notes
+    -----
+    A same-filesystem rename publishes overwrites atomically. For exclusive
+    creation, a hard link prevents replacing a concurrently created file.
+    Temporary files are removed if writing or publication fails.
+    """
+    out = Path(output)
+    if not overwrite and (out.exists() or out.is_symlink()):
+        raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
+    if overwrite:
+        out = out.resolve()
+    with TemporaryDirectory(prefix=".pqfilt-", dir=out.parent) as directory:
+        staged = Path(directory) / out.name
+        yield staged
+        if overwrite:
+            if out.exists():
+                staged.chmod(S_IMODE(out.stat().st_mode))
+            os.replace(staged, out)
+        else:
+            os.link(staged, out)
+
+
 def scan(
     source: str | Path | list[str | Path],
     *,
@@ -211,7 +254,8 @@ def write_filtered(
 
     Unlike :func:`read`, this function does not materialize the complete
     filtered result in memory. It writes Parquet by default and writes CSV
-    when *output* has a ``.csv`` suffix.
+    when *output* has a ``.csv`` suffix. Output is staged beside the destination
+    and published only after writing succeeds, preserving it on failure.
 
     Parameters
     ----------
@@ -245,18 +289,19 @@ def write_filtered(
     if out.resolve() in {Path(file).resolve() for file in files}:
         raise ValueError("Output path must not be an input file for streaming writes.")
 
-    scanner = scan(files, filters=filters, columns=columns)
-    rows_written = 0
-    writer: pq.ParquetWriter | pacsv.CSVWriter
-    if out.suffix.lower() == ".csv":
-        writer = pacsv.CSVWriter(str(out), scanner.projected_schema)
-    else:
-        writer = pq.ParquetWriter(out, scanner.projected_schema)
+    with _atomic_output(out, overwrite) as staged:
+        scanner = scan(files, filters=filters, columns=columns)
+        rows_written = 0
+        writer: pq.ParquetWriter | pacsv.CSVWriter
+        if out.suffix.lower() == ".csv":
+            writer = pacsv.CSVWriter(str(staged), scanner.projected_schema)
+        else:
+            writer = pq.ParquetWriter(staged, scanner.projected_schema)
 
-    with writer:
-        for batch in scanner.to_batches():
-            writer.write_batch(batch)
-            rows_written += batch.num_rows
+        with writer:
+            for batch in scanner.to_batches():
+                writer.write_batch(batch)
+                rows_written += batch.num_rows
     return rows_written
 
 
@@ -292,12 +337,11 @@ def _write_table(
         If *output* exists and *overwrite* is ``False``.
     """
     out = Path(output)
-    if out.exists() and not overwrite:
-        raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
-    if out.suffix.lower() == ".csv":
-        (dataframe if dataframe is not None else table.to_pandas()).to_csv(out, index=False)
-    else:
-        pq.write_table(table, out)
+    with _atomic_output(out, overwrite) as staged:
+        if out.suffix.lower() == ".csv":
+            (dataframe if dataframe is not None else table.to_pandas()).to_csv(staged, index=False)
+        else:
+            pq.write_table(table, staged)
     return out
 
 

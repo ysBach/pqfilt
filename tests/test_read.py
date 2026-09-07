@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from stat import S_IMODE
+from typing import Any
+
 import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 import pytest
 
 import pqfilt
@@ -123,6 +130,59 @@ class TestWriteFiltered:
         with pytest.raises(ValueError, match="must not be an input file"):
             pqfilt.write_filtered(sample_parquet, sample_parquet, overwrite=True)
 
+    @pytest.mark.parametrize("suffix", [".parquet", ".csv"])
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_failed_scan_preserves_destination(
+        self, tmp_path: Path, suffix: str, existing: bool
+    ) -> None:
+        good = tmp_path / "good.parquet"
+        bad = tmp_path / "bad.parquet"
+        pq.write_table(pa.table({"a": [1, 2]}), good)
+        pq.write_table(pa.table({"a": ["invalid integer"]}), bad)
+        output = tmp_path / f"output{suffix}"
+        original = b"previous output"
+        if existing:
+            output.write_bytes(original)
+        before = set(tmp_path.iterdir())
+
+        with pytest.raises(pa.ArrowInvalid):
+            pqfilt.write_filtered([good, bad], output, overwrite=existing)
+
+        assert set(tmp_path.iterdir()) == before
+        if existing:
+            assert output.read_bytes() == original
+
+    @pytest.mark.parametrize("suffix", [".parquet", ".csv"])
+    def test_successful_overwrite(self, sample_parquet: str, tmp_path: Path, suffix: str) -> None:
+        output = tmp_path / f"output{suffix}"
+        output.write_bytes(b"previous output")
+
+        rows = pqfilt.write_filtered(sample_parquet, output, filters="a > 5", overwrite=True)
+
+        result = pd.read_csv(output) if suffix == ".csv" else pd.read_parquet(output)
+        assert rows == 5
+        assert result["a"].tolist() == [6, 7, 8, 9, 10]
+
+    def test_destination_created_during_scan_is_preserved(
+        self, sample_parquet: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pqfilt import core
+
+        output = tmp_path / "output.parquet"
+        real_scan = core.scan
+
+        def competing_scan(*args: Any, **kwargs: Any) -> ds.Scanner:
+            scanner = real_scan(*args, **kwargs)
+            output.write_bytes(b"created by another writer")
+            return scanner
+
+        monkeypatch.setattr(core, "scan", competing_scan)
+        with pytest.raises(FileExistsError):
+            pqfilt.write_filtered(sample_parquet, output)
+
+        assert output.read_bytes() == b"created by another writer"
+        assert set(tmp_path.iterdir()) == {Path(sample_parquet), output}
+
 
 class TestReadMultiFile:
     def test_multi_file(self, multi_parquet):
@@ -160,6 +220,39 @@ class TestReadOutput:
         pqfilt.read(sample_parquet, filters="a > 5", output=out, overwrite=True)
         reloaded = pd.read_parquet(out)
         assert len(reloaded) == 5
+
+    @pytest.mark.parametrize("api", ["read", "write_filtered"])
+    def test_overwrite_preserves_symlink_and_permissions(
+        self, sample_parquet: str, tmp_path: Path, api: str
+    ) -> None:
+        target = tmp_path / "target.parquet"
+        target.write_bytes(b"previous output")
+        target.chmod(0o640)
+        output = tmp_path / "output.parquet"
+        output.symlink_to(target)
+
+        getattr(pqfilt, api)(sample_parquet, output=output, filters="a > 5", overwrite=True)
+
+        assert output.is_symlink()
+        assert S_IMODE(target.stat().st_mode) == 0o640
+        assert pd.read_parquet(target)["a"].tolist() == [6, 7, 8, 9, 10]
+
+    def test_failed_write_preserves_existing_output(
+        self, sample_parquet: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output = tmp_path / "output.parquet"
+        output.write_bytes(b"previous output")
+
+        def failing_write(table: pa.Table, where: Path) -> None:
+            where.write_bytes(b"partial output")
+            raise OSError("Simulated write failure")
+
+        monkeypatch.setattr(pq, "write_table", failing_write)
+        with pytest.raises(OSError, match="Simulated write failure"):
+            pqfilt.read(sample_parquet, output=output, overwrite=True)
+
+        assert output.read_bytes() == b"previous output"
+        assert set(tmp_path.iterdir()) == {Path(sample_parquet), output}
 
 
 class TestReadSpecialColumns:

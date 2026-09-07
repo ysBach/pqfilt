@@ -39,6 +39,15 @@ result in memory, and returns the number of rows written::
 Parquet is written by default; a ``.csv`` output path selects CSV. The output
 path must not be an input file.
 
+Saving with :func:`pqfilt.write_filtered` or :func:`pqfilt.read`:
+
+* Output appears only after writing succeeds. Failures preserve existing output
+  and remove temporary files.
+* Allow disk space for the new output alongside any existing output.
+* ``overwrite=False`` also protects files created during the scan. It requires
+  filesystem hard-link support.
+* Overwrites follow output symbolic links and preserve permission bits.
+
 AST Transformations
 -------------------
 
