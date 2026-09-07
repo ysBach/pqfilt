@@ -146,26 +146,34 @@ def _resolve_files(source: str | Path | list[str | Path]) -> list[str]:
     Parameters
     ----------
     source : str, Path, or list
-        Single path, glob pattern, or list of paths.
+        Single path, glob pattern, or list of paths and patterns. Existing
+        paths are treated literally, including names containing brackets.
 
     Returns
     -------
     list of str
-        Resolved file paths.
+        Distinct files in first-occurrence order. Paths to the same file,
+        including symbolic and hard links, appear only once.
 
     Raises
     ------
     FileNotFoundError
         If no files match *source*.
     """
-    if isinstance(source, (str, Path)):
-        s = str(source)
-        if any(c in s for c in ["*", "?", "[", "]"]):
-            files = sorted(glob(s))
-        else:
-            files = [s]
-    else:
-        files = [str(f) for f in source]
+    sources = [source] if isinstance(source, (str, Path)) else source
+    files: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for item in sources:
+        path = str(item)
+        matches = [path] if Path(path).exists() else sorted(glob(path))
+        if not matches:
+            raise FileNotFoundError(f"No files found matching: {item}")
+        for match in matches:
+            file_stat = os.stat(match)
+            identity = (file_stat.st_dev, file_stat.st_ino)
+            if identity not in seen:
+                seen.add(identity)
+                files.append(match)
 
     if not files:
         raise FileNotFoundError(f"No files found matching: {source}")
@@ -221,7 +229,7 @@ def scan(
     Parameters
     ----------
     source : str, Path, or list
-        File path, glob pattern, or explicit list of paths.
+        File path, glob pattern, or list of paths and patterns.
     filters : str, list, ExprNode, or None
         Filter specification accepted by :func:`to_ast`.
     columns : list of str, optional
@@ -260,7 +268,7 @@ def write_filtered(
     Parameters
     ----------
     source : str, Path, or list
-        File path, glob pattern, or explicit list of paths.
+        File path, glob pattern, or list of paths and patterns.
     output : str or Path
         Destination path for the filtered result.
     filters : str, list, ExprNode, or None, optional
@@ -363,8 +371,8 @@ def read(
     Parameters
     ----------
     source : str, Path, or list
-        File path, glob pattern (e.g., ``"data/*.parquet"``), or explicit
-        list of paths.
+        File path, glob pattern (e.g., ``"data/*.parquet"``), or list of
+        paths and patterns.
     filters : str, list, ExprNode, or None, optional
         Filter specification.  Accepts several formats:
 

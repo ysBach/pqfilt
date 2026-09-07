@@ -206,6 +206,57 @@ class TestReadMultiFile:
         df = pqfilt.read(pattern)
         assert len(df) == 10
 
+    def test_globs_in_source_list(self, multi_parquet: list[str], tmp_path: Path) -> None:
+        sources = [str(tmp_path / "part_0*.parquet"), str(tmp_path / "part_1*.parquet")]
+        assert pqfilt.read(sources)["a"].tolist() == list(range(1, 11))
+
+    def test_overlapping_globs_read_each_file_once(
+        self, multi_parquet: list[str], tmp_path: Path
+    ) -> None:
+        sources = [multi_parquet[1], str(tmp_path / "part_*.parquet"), multi_parquet[0]]
+
+        assert pqfilt.read(sources)["a"].tolist() == [6, 7, 8, 9, 10, 1, 2, 3, 4, 5]
+
+    @pytest.mark.parametrize("alias_kind", ["relative", "symlink", "hardlink"])
+    def test_file_aliases_are_read_once(
+        self,
+        sample_parquet: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        alias_kind: str,
+    ) -> None:
+        source = Path(sample_parquet)
+        if alias_kind == "relative":
+            monkeypatch.chdir(tmp_path)
+            alias = Path(source.name)
+        else:
+            alias = tmp_path / "alias.parquet"
+            if alias_kind == "symlink":
+                alias.symlink_to(source)
+            else:
+                os.link(source, alias)
+
+        assert pqfilt.read([alias, source])["a"].tolist() == list(range(1, 11))
+
+    def test_distinct_files_with_identical_rows_are_both_read(
+        self, sample_parquet: str, tmp_path: Path
+    ) -> None:
+        duplicate = tmp_path / "copy.parquet"
+        duplicate.write_bytes(Path(sample_parquet).read_bytes())
+
+        assert pqfilt.read([sample_parquet, duplicate])["a"].tolist() == list(range(1, 11)) * 2
+
+    def test_literal_filename_with_brackets(self, sample_df: pd.DataFrame, tmp_path: Path) -> None:
+        path = tmp_path / "data[0].parquet"
+        sample_df.to_parquet(path, index=False)
+        pd.testing.assert_frame_equal(pqfilt.read(path), sample_df)
+
+    def test_unmatched_pattern_in_source_list_raises(
+        self, sample_parquet: str, tmp_path: Path
+    ) -> None:
+        with pytest.raises(FileNotFoundError, match="missing"):
+            pqfilt.read([sample_parquet, str(tmp_path / "missing*.parquet")])
+
 
 class TestReadOutput:
     def test_save_parquet(self, sample_parquet, tmp_path):

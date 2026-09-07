@@ -263,10 +263,17 @@ backtick-quoted::
 Multi-file and Glob
 ~~~~~~~~~~~~~~~~~~~
 
-Pass a glob pattern or a list of files::
+Pass a glob pattern or a list of files and patterns::
 
     df = pqfilt.read("data/*.parquet", filters="vmag < 20")
     df = pqfilt.read(["file1.parquet", "file2.parquet"], filters="a > 5")
+    df = pqfilt.read(["night1/*.parquet", "night2/*.parquet"], filters="a > 5")
+
+* Existing paths are literal: ``data[0].parquet`` works directly.
+* Unmatched patterns raise ``FileNotFoundError``.
+* Input order is preserved; each pattern's matches are sorted.
+* Each file is read once, at its first occurrence. Repeated paths, symlinks,
+  and hard links are deduplicated; separate copies remain separate inputs.
 
 Output
 ~~~~~~
