@@ -37,7 +37,7 @@ result in memory, and returns the number of rows written::
     )
 
 Parquet is written by default; a ``.csv`` output path selects CSV. The output
-path must not be an input file.
+path must not be an input file, including a hard link or symbolic link to one.
 
 Saving with :func:`pqfilt.write_filtered` or :func:`pqfilt.read`:
 

@@ -284,10 +284,12 @@ def write_filtered(
     """
     files = _resolve_files(source)
     out = Path(output)
-    if out.exists() and not overwrite:
-        raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
-    if out.resolve() in {Path(file).resolve() for file in files}:
-        raise ValueError("Output path must not be an input file for streaming writes.")
+    if out.exists():
+        if not overwrite:
+            raise FileExistsError(f"Output file '{output}' already exists. Use overwrite=True.")
+        output_stat = out.stat()
+        if any(os.path.samestat(output_stat, Path(file).stat()) for file in files):
+            raise ValueError("Output path must not be an input file for streaming writes.")
 
     with _atomic_output(out, overwrite) as staged:
         scanner = scan(files, filters=filters, columns=columns)

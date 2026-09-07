@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from stat import S_IMODE
 from typing import Any
@@ -129,6 +130,17 @@ class TestWriteFiltered:
     def test_rejects_input_as_output(self, sample_parquet):
         with pytest.raises(ValueError, match="must not be an input file"):
             pqfilt.write_filtered(sample_parquet, sample_parquet, overwrite=True)
+
+    def test_rejects_hard_link_to_input(self, sample_parquet: str, tmp_path: Path) -> None:
+        source = Path(sample_parquet)
+        original = source.read_bytes()
+        output = tmp_path / "alias.parquet"
+        os.link(source, output)
+
+        with pytest.raises(ValueError, match="must not be an input file"):
+            pqfilt.write_filtered(source, output, filters="a > 5", overwrite=True)
+
+        assert source.read_bytes() == original
 
     @pytest.mark.parametrize("suffix", [".parquet", ".csv"])
     @pytest.mark.parametrize("existing", [False, True])
