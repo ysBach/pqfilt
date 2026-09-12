@@ -20,8 +20,9 @@ choose how to consume the data::
     for batch in pqfilt.scan("data.parquet", filters="vmag < 20").to_batches():
         process(batch)
 
-The scanner exposes ``dataset_schema`` for the stored schema and
-``projected_schema`` for the requested output projection.
+Use ``dataset_schema`` to inspect the combined input types needed by the scan.
+Use ``projected_schema`` to inspect the columns returned by the scanner.
+See :ref:`multi-file-schemas` for the type rules and limits.
 
 Streaming Writes
 ----------------

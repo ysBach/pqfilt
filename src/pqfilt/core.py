@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterator
@@ -218,13 +219,137 @@ def _atomic_output(output: str | Path, overwrite: bool) -> Iterator[Path]:
             os.link(staged, out)
 
 
+def _dataset_schema(files: list[str], columns: set[str] | None) -> pa.Schema:
+    """Combine column types from file metadata before scanning rows.
+
+    Parameters
+    ----------
+    files : list of str
+        Input paths in scan order, after glob expansion and deduplication.
+    columns : set of str or None
+        Output and filter fields, or `None` for all fields.
+
+    Returns
+    -------
+    pyarrow.Schema
+        All needed fields with compatible common types. Missing fields are
+        nullable. Pandas metadata preserves promoted and newly nullable
+        integers; scan casts still check the target's supported range.
+
+    Raises
+    ------
+    pyarrow.ArrowTypeError
+        If a needed field has incompatible types across files.
+    pyarrow.ArrowInvalid
+        If an input schema repeats a needed field name.
+    """
+    schemas = [pq.read_schema(file) for file in files]
+    if columns is not None:
+        # Let Arrow resolve nested projections, including escaped field names.
+        # Literal dotted column names take precedence over nested paths.
+        unresolved = columns - {field.name for schema in schemas for field in schema}
+        for name in unresolved:
+            for schema in schemas:
+                for field in schema:
+                    if field.name in columns or not pa.types.is_struct(field.type):
+                        continue
+                    probe = pa.Table.from_batches([], schema=pa.schema([field]))
+                    try:
+                        ds.dataset(probe).scanner(columns=[name])
+                    except pa.ArrowInvalid:
+                        continue
+                    columns.add(field.name)
+
+    fields: dict[str, list[pa.Field]] = {}
+    for schema in schemas:
+        seen: set[str] = set()
+        for field in schema:
+            if columns is None or field.name in columns:
+                if field.name in seen:
+                    raise pa.ArrowInvalid(f"Duplicate field name {field.name!r} in input schema")
+                seen.add(field.name)
+                fields.setdefault(field.name, []).append(field)
+
+    merged_fields = []
+    for versions in fields.values():
+        numeric = all(
+            pa.types.is_null(field.type)
+            or pa.types.is_integer(field.type)
+            or pa.types.is_floating(field.type)
+            for field in versions
+        )
+        merged = pa.unify_schemas(
+            [pa.schema([field]) for field in versions],
+            promote_options="permissive" if numeric else "default",
+        )
+        merged_field = merged.field(0)
+        if len(versions) < len(schemas):
+            merged_field = merged_field.with_nullable(True)
+        merged_fields.append(merged_field)
+
+    metadata = schemas[0].metadata
+    pandas_metadata = (
+        json.loads(metadata[b"pandas"]) if metadata and b"pandas" in metadata else None
+    )
+    column_metadata = (
+        {column["field_name"]: column for column in pandas_metadata["columns"]}
+        if pandas_metadata is not None
+        else {}
+    )
+    overrides: dict[str, pd.Series] = {}
+    for field in merged_fields:
+        target = field.type
+        if not (pa.types.is_integer(target) or pa.types.is_floating(target)):
+            continue
+        versions = fields[field.name]
+        column = column_metadata.get(field.name)
+        if column is not None and target != versions[0].type:
+            # Stored pandas dtypes must not narrow a promoted Arrow field.
+            dtype = target.to_pandas_dtype().__name__
+            original = pd.api.types.pandas_dtype(column["numpy_type"])
+            if pa.types.is_integer(target) and isinstance(
+                original, pd.api.extensions.ExtensionDtype
+            ):
+                prefix = "UInt" if pa.types.is_unsigned_integer(target) else "Int"
+                dtype = f"{prefix}{target.bit_width}"
+            overrides[field.name] = pd.Series([], dtype=dtype)
+        if pa.types.is_integer(target) and target.bit_width == 64:
+            inserted_nulls = len(versions) < len(schemas) or any(
+                pa.types.is_null(version.type) for version in versions
+            )
+            if inserted_nulls:
+                # float64 cannot preserve all 64-bit integers after null insertion.
+                nullable_dtype = (
+                    pd.UInt64Dtype() if pa.types.is_unsigned_integer(target) else pd.Int64Dtype()
+                )
+                overrides[field.name] = pd.Series([], dtype=nullable_dtype)
+
+    if overrides:
+        # Generate standard pandas metadata through Arrow instead of guessing it.
+        generated = pa.Table.from_pandas(pd.DataFrame(overrides), preserve_index=False).schema
+        generated_metadata = json.loads(generated.metadata[b"pandas"])
+        if pandas_metadata is None:
+            pandas_metadata = generated_metadata
+        else:
+            for column in generated_metadata["columns"]:
+                original = column_metadata.get(column["field_name"])
+                if original is None:
+                    pandas_metadata["columns"].append(column)
+                else:
+                    for key in ("pandas_type", "numpy_type", "metadata"):
+                        original[key] = column[key]
+        metadata = {**(metadata or {}), b"pandas": json.dumps(pandas_metadata).encode()}
+
+    return pa.schema(merged_fields, metadata=metadata)
+
+
 def scan(
     source: str | Path | list[str | Path],
     *,
     filters: str | list | ExprNode | None = None,
     columns: list[str] | None = None,
 ) -> ds.Scanner:
-    """Create an Arrow scanner with the pqfilt filter and projection policy.
+    """Create a scanner that filters rows and selects output columns.
 
     Parameters
     ----------
@@ -233,18 +358,41 @@ def scan(
     filters : str, list, ExprNode, or None
         Filter specification accepted by :func:`to_ast`.
     columns : list of str, optional
-        Columns to project from the input dataset.
+        Columns to return. `None` includes every column found across the files.
 
     Returns
     -------
     pyarrow.dataset.Scanner
-        Lazily evaluated scanner configured with the requested filter and
-        projection.
+        Scanner ready to read the filtered result as a table or record batches.
+
+    Notes
+    -----
+    Files may have different columns or compatible column types. Missing
+    fields become nulls. Integer and floating-point types follow Arrow's
+    numeric promotion rules; unsafe integer casts raise during scanning.
+
+    File metadata is read before scanning. Rows are still filtered and streamed
+    in batches. See :ref:`multi-file-schemas` for examples and type limits.
     """
     pa_filter: Any | None = None
+    needed = None if columns is None else set(columns)
     if filters is not None:
-        pa_filter = to_pyarrow_expr(to_ast(filters))
-    return ds.dataset(_resolve_files(source), format="parquet").scanner(
+        ast = to_ast(filters)
+        pa_filter = to_pyarrow_expr(ast)
+        if needed is not None:
+            pending = [ast]
+            while pending:
+                node = pending.pop()
+                if isinstance(node, FilterExpr):
+                    needed.add(node.col)
+                elif isinstance(node, NotExpr):
+                    pending.append(node.child)
+                else:
+                    pending.extend(node.children)
+
+    files = _resolve_files(source)
+    schema = _dataset_schema(files, needed) if len(files) > 1 else None
+    return ds.dataset(files, format="parquet", schema=schema).scanner(
         columns=columns,
         filter=pa_filter,
     )
@@ -396,7 +544,7 @@ def read(
         ``NotExpr``).
 
     columns : list of str, optional
-        Columns to load (projection pushdown).  ``None`` loads all columns.
+        Columns to load. `None` includes every column found across the files.
     output : str or Path, optional
         Save the result to this path (``.parquet`` or ``.csv``).
     overwrite : bool, optional
@@ -406,6 +554,12 @@ def read(
     -------
     pandas.DataFrame
         Filtered (and optionally column-selected) DataFrame.
+
+    Notes
+    -----
+    If combining files adds nulls to a 64-bit integer column, the result uses
+    pandas `Int64` or `UInt64` to preserve large integers exactly. See
+    :ref:`multi-file-schemas` for the common-type rules and limits.
 
     Raises
     ------

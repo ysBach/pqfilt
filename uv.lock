@@ -809,7 +809,7 @@ wheels = [
 
 [[package]]
 name = "pqfilt"
-version = "0.3.1"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -838,7 +838,7 @@ docs = [
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "pandas", specifier = ">=1.5" },
-    { name = "pyarrow", specifier = ">=10.0" },
+    { name = "pyarrow", specifier = ">=14.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7.0" },

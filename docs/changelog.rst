@@ -1,6 +1,21 @@
 Changelog
 =========
 
+v0.4.0 (2026-09-12)
+--------------------
+
+* Filtering multiple files without ``--columns`` failed when a column was
+  ``null`` in one file and ``int32`` in another. It now combines compatible
+  column types automatically and retains all columns.
+* Numeric types depended on the first file. For example, ``uint8`` followed by
+  ``double`` could fail on fractional values; both orders now use ``double``.
+* A column present only in a later file was omitted from output and could not
+  be filtered. It is now available in either file order, with nulls where absent.
+* Stored pandas dtypes could narrow promoted values, and a missing earlier column
+  could round ``2**53 + 1``. Nullable integer widening and newly inserted nulls
+  now preserve 64-bit integer values in :func:`pqfilt.read`.
+* Increase the minimum PyArrow version from 10 to 14 for numeric schema promotion.
+
 v0.3.1 (2026-09-07)
 --------------------
 

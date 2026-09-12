@@ -157,7 +157,7 @@ class TestWriteFiltered:
             output.write_bytes(original)
         before = set(tmp_path.iterdir())
 
-        with pytest.raises(pa.ArrowInvalid):
+        with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError)):
             pqfilt.write_filtered([good, bad], output, overwrite=existing)
 
         assert set(tmp_path.iterdir()) == before

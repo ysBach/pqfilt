@@ -275,6 +275,47 @@ Pass a glob pattern or a list of files and patterns::
 * Each file is read once, at its first occurrence. Repeated paths, symlinks,
   and hard links are deduplicated; separate copies remain separate inputs.
 
+.. _multi-file-schemas:
+
+Different Columns or Types
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Keep all columns without listing them::
+
+    pqfilt data/*.parq -f "flux > 0" -o filtered.csv
+
+The result includes every column found across the input files. Before scanning
+rows, pqfilt chooses a common Arrow type for each column:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Input files contain
+     - Result
+   * - A column missing from some files
+     - Keep the column; fill missing values with nulls.
+   * - ``null`` and ``int32``
+     - Use Arrow ``int32``; preserve nulls.
+   * - ``uint8`` and ``double``
+     - Use ``double``.
+   * - Strings and numbers in the same column
+     - Raise an error; do not convert strings to numbers or numbers to strings.
+
+Integer and floating-point columns use Arrow's numeric promotion rules. Integer
+casts outside the target's supported range raise an error during scanning.
+Other types must satisfy Arrow's default schema merging rules.
+
+Use ``columns=[...]`` or ``--columns`` only when you want fewer output columns.
+Then only output columns and columns used by the filter are combined; unrelated
+top-level type conflicts do not block the scan.
+
+Checking types reads each file's footer before scanning. Rows are still filtered
+and streamed in batches. The Arrow types in the table above describe the scan;
+pandas may use different dtypes when :func:`pqfilt.read` returns a DataFrame.
+When combining files adds nulls to a 64-bit integer column, ``read()`` uses
+pandas ``Int64`` or ``UInt64`` so large integer values stay exact.
+
 Output
 ~~~~~~
 
